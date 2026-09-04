@@ -28,7 +28,12 @@ export async function GET(request: Request) {
     if (projectsError || !allProjectsRaw) {
       console.error(projectsError);
       return NextResponse.json(
-        { error: "Ошибка загрузки проектов" },
+        {
+          error: "Ошибка загрузки проектов",
+          detail: projectsError?.message ?? "no data",
+          hasUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+          hasKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+        },
         { status: 500 }
       );
     }
