@@ -13,6 +13,7 @@ import {
 } from "@/lib/format";
 import { Select } from "@/components/ui/Select";
 import { cn } from "@/utils/cn";
+import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import {
   ArrowLeft,
   Loader2,
@@ -32,7 +33,7 @@ const DEFAULT_OBJECT_TYPES = [
 ];
 
 const DRAFT_KEY = "stroiuchot-new-project-draft";
-const MAX_FILE_BYTES = 1.5 * 1024 * 1024; // совпадает с лимитом API фото
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // исходник до сжатия на клиенте
 
 type FormState = {
   name: string;
@@ -194,7 +195,7 @@ export default function NewProjectPage() {
         continue;
       }
       if (file.size > MAX_FILE_BYTES) {
-        errorMsg = `Файл «${file.name}» больше 1.5 МБ (лимит сервера)`;
+        errorMsg = `Файл «${file.name}» больше 25 МБ`;
         continue;
       }
       accepted.push(file);
@@ -261,18 +262,18 @@ export default function NewProjectPage() {
 
       if (photoFiles.length > 0) {
         for (const file of photoFiles) {
-          if (!file.type.startsWith("image/")) continue; // API фото принимает изображения
-          const fd = new FormData();
-          fd.set("file", file);
-          if (
-            file.name.toLowerCase().includes("план") ||
-            file.name.toLowerCase().includes("plan")
-          ) {
-            fd.set("comment", "План");
+          if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
+            continue;
           }
-          await fetch(`/api/projects/${projectId}/photos`, {
-            method: "POST",
-            body: fd,
+          const compressed = await compressPhoto(file);
+          const comment =
+            file.name.toLowerCase().includes("план") || file.name.toLowerCase().includes("plan")
+              ? "План"
+              : null;
+          await uploadPhotoWithProgress(projectId, {
+            full: compressed.full,
+            thumb: compressed.thumb,
+            comment,
           });
         }
       }
@@ -784,7 +785,7 @@ export default function NewProjectPage() {
               Перетащите файл сюда или выберите на компьютере
             </p>
             <p className="text-caption text-muted">
-              JPG или PNG, до 1.5 МБ на файл (лимит сервера)
+              JPG/PNG до 25 МБ — сожмём на устройстве перед загрузкой
             </p>
           </div>
           {fieldErrors.photos && (

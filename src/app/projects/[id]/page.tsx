@@ -12,6 +12,7 @@ import {
   ProjectExpensesSection,
   ProjectActivitySection,
 } from "@/components/project/ProjectTabSections";
+import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, EXPENSE_CATEGORIES } from "@/lib/constants";
 import {
   formatThousands,
@@ -328,18 +329,20 @@ export default function ProjectPage() {
   const uploadStagePhoto = async (stageId: number) => {
     if (!project || !stagePhotoFile) return;
     setUploadingStagePhoto(true);
-    const form = new FormData();
-    form.set("file", stagePhotoFile);
-    form.set("stageId", String(stageId));
-    if (stagePhotoComment.trim()) form.set("comment", stagePhotoComment.trim());
     try {
-      const res = await fetch(`/api/projects/${project.id}/photos`, { method: "POST", body: form });
-      if (res.ok) {
-        setStagePhotoStageId(null);
-        setStagePhotoFile(null);
-        setStagePhotoComment("");
-        refetch();
-      }
+      const compressed = await compressPhoto(stagePhotoFile);
+      await uploadPhotoWithProgress(project.id, {
+        full: compressed.full,
+        thumb: compressed.thumb,
+        stageId,
+        comment: stagePhotoComment.trim() || null,
+      });
+      setStagePhotoStageId(null);
+      setStagePhotoFile(null);
+      setStagePhotoComment("");
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Ошибка загрузки фото");
     } finally {
       setUploadingStagePhoto(false);
     }
@@ -348,19 +351,18 @@ export default function ProjectPage() {
   const handlePhotoUpload = async (file: File) => {
     if (!file || !project) return;
     setUploadingPhoto(true);
-    const form = new FormData();
-    form.set("file", file);
-    if (photoStageId) form.set("stageId", photoStageId);
-    if (photoComment) form.set("comment", photoComment);
     try {
-      const res = await fetch(`/api/projects/${project.id}/photos`, {
-        method: "POST",
-        body: form,
+      const compressed = await compressPhoto(file);
+      await uploadPhotoWithProgress(project.id, {
+        full: compressed.full,
+        thumb: compressed.thumb,
+        stageId: photoStageId || null,
+        comment: photoComment || null,
       });
-      if (res.ok) {
-        setPhotoComment("");
-        refetch();
-      }
+      setPhotoComment("");
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Ошибка загрузки фото");
     } finally {
       setUploadingPhoto(false);
     }

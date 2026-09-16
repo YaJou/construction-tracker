@@ -1,0 +1,11 @@
+const fs = require("fs");
+const p = "src/components/project/ProjectTabSections.tsx";
+let s = fs.readFileSync(p, "utf8");
+const start = s.indexOf("export function ProjectPhotosSection");
+const end = s.indexOf("export function ProjectExpensesSection");
+if (start < 0 || end < 0) throw new Error("markers not found");
+const before = s.slice(0, start);
+const after = s.slice(end);
+const next = `${before}export { ProjectPhotosSection } from "./ProjectPhotosSection";\n\n${after}`;
+fs.writeFileSync(p, next);
+console.log("ok", next.length);
