@@ -23,7 +23,21 @@ export const STAGE_STATUS_LABELS: Record<string, string> = {
   completed: "Завершен",
 };
 
-export const EXPENSE_CATEGORIES = ["Материалы", "Работы", "Проект", "Прочее"];
+export const EXPENSE_CATEGORIES = [
+  "Фундамент",
+  "Стены",
+  "Кровля",
+  "Окна и двери",
+  "Черновые работы",
+  "Электрика",
+  "Сантехника",
+  "Дополнения",
+  "Проект",
+  "Прочее",
+];
+
+/** @deprecated Prefer SMETA item kinds — kept for old expense rows */
+export const LEGACY_EXPENSE_CATEGORIES = ["Материалы", "Работы", "Проект", "Прочее"];
 
 export function objectWord(count: number) {
   const n = Math.abs(count) % 100;

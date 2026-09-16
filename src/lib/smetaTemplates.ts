@@ -116,3 +116,17 @@ export function lineAmount(quantity: number | null, unitPrice: number | null): n
   if (quantity == null || unitPrice == null) return 0;
   return Math.round(quantity * unitPrice * 100) / 100;
 }
+
+export const SMETA_KIND_LABELS: Record<SmetaItemKind, string> = {
+  material: "Материал",
+  labor: "Работа",
+  other: "Прочее",
+};
+
+export function smetaSectionNames() {
+  return SMETA_TEMPLATES.map((t) => t.name);
+}
+
+export function smetaItemsForSection(sectionName: string) {
+  return findSmetaTemplate(sectionName)?.items ?? [];
+}

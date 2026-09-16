@@ -12,10 +12,8 @@ import {
   ProjectExpensesSection,
   ProjectActivitySection,
 } from "@/components/project/ProjectTabSections";
-import { ProjectSmetaSection } from "@/components/project/ProjectSmetaSection";
 import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
-import { EXPENSE_CATEGORIES } from "@/lib/constants";
 import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
@@ -42,7 +40,6 @@ import {
   ImagePlus,
   DollarSign,
   History,
-  ClipboardList,
   CheckCircle2,
   Circle,
   Loader2,
@@ -61,7 +58,7 @@ import {
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
-type TabId = "overview" | "stages" | "photos" | "expenses" | "smeta" | "activity";
+type TabId = "overview" | "stages" | "photos" | "expenses" | "activity";
 
 type OverviewPhoto = {
   id: number;
@@ -137,13 +134,8 @@ export default function ProjectPage() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [photoStageId, setPhotoStageId] = useState("");
   const [photoComment, setPhotoComment] = useState("");
-  const [expenseDate, setExpenseDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [expenseCategory, setExpenseCategory] = useState(EXPENSE_CATEGORIES[0]);
-  const [expenseDesc, setExpenseDesc] = useState("");
-  const [expenseAmount, setExpenseAmount] = useState("");
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [addingExpense, setAddingExpense] = useState(false);
   const [expensesVersion, setExpensesVersion] = useState(0);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditingCard, setIsEditingCard] = useState(false);
   const [editClient, setEditClient] = useState("");
@@ -540,33 +532,6 @@ export default function ProjectPage() {
     }
   };
 
-  const handleAddExpense = async () => {
-    if (!project || !expenseAmount) return;
-    const numericAmount = parseFormattedNumber(expenseAmount);
-    if (!numericAmount) return;
-    setAddingExpense(true);
-    try {
-      const res = await fetch(`/api/projects/${project.id}/expenses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: expenseDate,
-          category: expenseCategory,
-          description: expenseDesc || null,
-          amount: numericAmount,
-        }),
-      });
-      if (res.ok) {
-        setExpenseDesc("");
-        setExpenseAmount("");
-        setExpensesVersion((v) => v + 1);
-        refetch();
-      }
-    } finally {
-      setAddingExpense(false);
-    }
-  };
-
   const handleExportReport = async (mode: "full" | "client" = "full") => {
     if (!project || exportingPdf) return;
     setExportingPdf(true);
@@ -722,8 +687,7 @@ export default function ProjectPage() {
     { id: "overview", label: "Обзор", icon: LayoutDashboard },
     { id: "stages", label: "Этапы", icon: CheckCircle2 },
     { id: "photos", label: "Фото", icon: ImagePlus },
-    { id: "expenses", label: "Расходы", icon: DollarSign },
-    { id: "smeta", label: "Смета", icon: ClipboardList },
+    { id: "expenses", label: "Смета", icon: DollarSign },
     { id: "activity", label: "Журнал", icon: History },
   ];
 
@@ -1329,8 +1293,8 @@ export default function ProjectPage() {
         </div>
       )}
 
-      {/* Tabs — 2×3 on phone so all six fit */}
-      <div className="grid grid-cols-3 gap-1.5 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
+      {/* Tabs — full-width on phone */}
+      <div className="grid grid-cols-5 gap-1 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
         {tabs.map(({ id: tabId, label, icon: Icon }) => (
           <button
             key={tabId}
@@ -1378,7 +1342,7 @@ export default function ProjectPage() {
                 </li>
                 <li>
                   <button type="button" className="text-orange font-medium hover:underline" onClick={() => setActiveTab("expenses")}>
-                    Зафиксируйте расход
+                    Добавьте позицию в смету
                   </button>
                 </li>
               </ul>
@@ -1742,12 +1706,12 @@ export default function ProjectPage() {
                   icon: Camera,
                   onClick: () => setActiveTab("photos"),
                 },
-                {
-                  id: "expense",
-                  label: "Добавить расход",
-                  icon: DollarSign,
-                  onClick: () => setActiveTab("expenses"),
-                },
+              {
+                id: "expense",
+                label: "Добавить в смету",
+                icon: DollarSign,
+                onClick: () => setActiveTab("expenses"),
+              },
                 {
                   id: "comment",
                   label: "Комментарий",
@@ -1881,21 +1845,12 @@ export default function ProjectPage() {
         <ProjectExpensesSection
           projectId={project.id}
           reloadKey={expensesVersion}
-          expenseDate={expenseDate}
-          setExpenseDate={setExpenseDate}
-          expenseCategory={expenseCategory}
-          setExpenseCategory={setExpenseCategory}
-          expenseDesc={expenseDesc}
-          setExpenseDesc={setExpenseDesc}
-          expenseAmount={expenseAmount}
-          setExpenseAmount={setExpenseAmount}
-          handleAddExpense={handleAddExpense}
-          addingExpense={addingExpense}
-          refetch={refetch}
+          refetch={() => {
+            setExpensesVersion((v) => v + 1);
+            refetch();
+          }}
         />
       )}
-
-      {activeTab === "smeta" && <ProjectSmetaSection projectId={project.id} />}
 
       {activeTab === "activity" && <ProjectActivitySection projectId={project.id} />}
 
