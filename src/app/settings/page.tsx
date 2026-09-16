@@ -102,13 +102,16 @@ export default function SettingsPage() {
   const [okMessage, setOkMessage] = useState("");
   const [search, setSearch] = useState("");
 
-  // stages
+  // stages — локальный список = источник правды для UI (не ждём ответа сервера)
+  const [stageList, setStageList] = useState<SettingDefaultStage[]>([]);
+  const stageListRef = useRef<SettingDefaultStage[]>([]);
   const [editingStageId, setEditingStageId] = useState<number | null>(null);
   const [editingStageName, setEditingStageName] = useState("");
   const [addingStage, setAddingStage] = useState(false);
   const [newStageName, setNewStageName] = useState("");
   const newStageRef = useRef<HTMLInputElement>(null);
-  const [dragId, setDragId] = useState<number | null>(null);
+  const dragIndexRef = useRef<number | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   // managers
   const [editingManagerId, setEditingManagerId] = useState<number | null>(null);
@@ -138,6 +141,16 @@ export default function SettingsPage() {
         return;
       }
       setData(json);
+      const orderedStages = [...json.default_stages]
+        .map((s, i) => ({
+          id: Number(s.id),
+          name: s.name,
+          order_index: typeof s.order_index === "number" ? s.order_index : i,
+        }))
+        .sort((a, b) => a.order_index - b.order_index)
+        .map((s, i) => ({ ...s, order_index: i }));
+      stageListRef.current = orderedStages;
+      setStageList(orderedStages);
       setProjectDrafts(
         Object.fromEntries(json.project_statuses.map((s) => [s.key, s.label]))
       );
@@ -213,7 +226,27 @@ export default function SettingsPage() {
         setError(updated?.error || "Не удалось сохранить");
         return false;
       }
-      setData(updated);
+      // Для этапов оставляем локальный порядок — сервер иногда отдаёт старый
+      // порядок при RLS, хотя запись уже ушла.
+      if (section === "default_stages" && Array.isArray(value)) {
+        const local = (value as SettingDefaultStage[]).map((s, i) => ({
+          ...s,
+          id: Number(s.id),
+          order_index: i,
+        }));
+        stageListRef.current = local;
+        setStageList(local);
+        setData({ ...updated, default_stages: local });
+      } else {
+        setData(updated);
+        if (updated.default_stages) {
+          const ordered = [...updated.default_stages]
+            .sort((a, b) => a.order_index - b.order_index)
+            .map((s, i) => ({ ...s, id: Number(s.id), order_index: i }));
+          stageListRef.current = ordered;
+          setStageList(ordered);
+        }
+      }
       if (section === "project_statuses" || section === "stage_statuses") {
         setProjectDrafts(
           Object.fromEntries(updated.project_statuses.map((s) => [s.key, s.label]))
@@ -237,10 +270,9 @@ export default function SettingsPage() {
   const q = search.trim().toLowerCase();
 
   const stages = useMemo(() => {
-    const list = [...(data?.default_stages ?? [])].sort((a, b) => a.order_index - b.order_index);
-    if (!q) return list;
-    return list.filter((s) => s.name.toLowerCase().includes(q));
-  }, [data, q]);
+    if (!q) return stageList;
+    return stageList.filter((s) => s.name.toLowerCase().includes(q));
+  }, [stageList, q]);
 
   const managers = useMemo(() => {
     const list = data?.managers ?? [];
@@ -260,44 +292,60 @@ export default function SettingsPage() {
     return list.some((x) => x.id !== exceptId && x.name.trim().toLowerCase() === n);
   };
 
+  const applyStageOrder = (next: SettingDefaultStage[]) => {
+    const normalized = next.map((s, i) => ({ ...s, id: Number(s.id), order_index: i }));
+    stageListRef.current = normalized;
+    setStageList(normalized);
+    return normalized;
+  };
+
   const persistStagesOrder = async (ordered: SettingDefaultStage[]) => {
-    if (!data) return;
-    const next = ordered.map((s, i) => ({ ...s, order_index: i }));
-    const snapshot = data;
-    // Optimistic UI — стрелки сразу двигают список
-    setData({ ...data, default_stages: next });
+    const next = applyStageOrder(ordered);
     const ok = await saveSection("default_stages", next);
-    if (!ok) setData(snapshot);
+    if (!ok) {
+      // оставляем новый порядок на экране, чтобы правки не пропали;
+      // ошибка уже в setError
+    }
   };
 
-  const moveStage = async (id: number, dir: -1 | 1) => {
-    if (!data || saving) return;
-    const ordered = [...data.default_stages].sort((a, b) => a.order_index - b.order_index);
-    const idx = ordered.findIndex((s) => s.id === id);
-    const j = idx + dir;
-    if (idx < 0 || j < 0 || j >= ordered.length) return;
-    const copy = [...ordered];
-    [copy[idx], copy[j]] = [copy[j], copy[idx]];
-    await persistStagesOrder(copy);
+  const moveStageAt = (index: number, dir: -1 | 1) => {
+    const list = stageListRef.current;
+    const j = index + dir;
+    if (index < 0 || j < 0 || j >= list.length) return;
+    const copy = [...list];
+    [copy[index], copy[j]] = [copy[j], copy[index]];
+    void persistStagesOrder(copy);
   };
 
-  const onDropStage = async (targetId: number) => {
-    if (!data || dragId == null || dragId === targetId || saving) {
-      setDragId(null);
-      return;
-    }
-    const ordered = [...data.default_stages].sort((a, b) => a.order_index - b.order_index);
-    const from = ordered.findIndex((s) => s.id === dragId);
-    const to = ordered.findIndex((s) => s.id === targetId);
-    if (from < 0 || to < 0) {
-      setDragId(null);
-      return;
-    }
-    const copy = [...ordered];
-    const [item] = copy.splice(from, 1);
-    copy.splice(to, 0, item);
-    setDragId(null);
-    await persistStagesOrder(copy);
+  const onStagePointerDown = (index: number) => (e: React.PointerEvent) => {
+    if (editingStageId != null || q) return;
+    e.preventDefault();
+    dragIndexRef.current = index;
+    setDragIndex(index);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
+  const onStagePointerMove = (e: React.PointerEvent) => {
+    const from = dragIndexRef.current;
+    if (from == null) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const row = el?.closest("[data-stage-index]") as HTMLElement | null;
+    if (!row) return;
+    const index = Number(row.dataset.stageIndex);
+    if (Number.isNaN(index) || index === from) return;
+    const list = [...stageListRef.current];
+    const [item] = list.splice(from, 1);
+    list.splice(index, 0, item);
+    dragIndexRef.current = index;
+    setDragIndex(index);
+    applyStageOrder(list);
+  };
+
+  const onStagePointerUp = () => {
+    if (dragIndexRef.current == null) return;
+    dragIndexRef.current = null;
+    setDragIndex(null);
+    void persistStagesOrder(stageListRef.current);
   };
 
   if (loading) {
@@ -396,9 +444,9 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-lg font-semibold text-ink">Этапы строительства</h2>
               <p className="mt-1 text-sm text-muted">
-                {data.default_stages.length}{" "}
-                {data.default_stages.length === 1 ? "этап" : "этапов"} · этот список используется при
-                создании новых объектов. Этапы существующих объектов редактируются в самих проектах.
+                {stageList.length} {stageList.length === 1 ? "этап" : "этапов"} · этот список
+                используется при создании новых объектов. Этапы существующих объектов редактируются в
+                самих проектах.
               </p>
             </div>
             <Button
@@ -439,15 +487,16 @@ export default function SettingsPage() {
                   if (e.key === "Enter") {
                     const name = normalizeName(newStageName);
                     if (!name) return setError("Укажите название этапа");
-                    if (isDuplicate(name, data.default_stages)) return setError("Такой этап уже есть");
+                    if (isDuplicate(name, stageList)) return setError("Такой этап уже есть");
                     const next = [
-                      ...data.default_stages,
+                      ...stageList,
                       {
-                        id: Math.max(0, ...data.default_stages.map((s) => s.id)) + 1,
+                        id: Math.max(0, ...stageList.map((s) => Number(s.id))) + 1,
                         name,
-                        order_index: data.default_stages.length,
+                        order_index: stageList.length,
                       },
                     ];
+                    applyStageOrder(next);
                     const ok = await saveSection("default_stages", next);
                     if (ok) {
                       setAddingStage(false);
@@ -461,15 +510,16 @@ export default function SettingsPage() {
                 onClick={async () => {
                   const name = normalizeName(newStageName);
                   if (!name) return setError("Укажите название этапа");
-                  if (isDuplicate(name, data.default_stages)) return setError("Такой этап уже есть");
+                  if (isDuplicate(name, stageList)) return setError("Такой этап уже есть");
                   const next = [
-                    ...data.default_stages,
+                    ...stageList,
                     {
-                      id: Math.max(0, ...data.default_stages.map((s) => s.id)) + 1,
+                      id: Math.max(0, ...stageList.map((s) => Number(s.id))) + 1,
                       name,
-                      order_index: data.default_stages.length,
+                      order_index: stageList.length,
                     },
                   ];
+                  applyStageOrder(next);
                   const ok = await saveSection("default_stages", next);
                   if (ok) {
                     setAddingStage(false);
@@ -491,49 +541,39 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <ul className="mt-3 divide-y divide-line">
-            {stages.map((s) => {
-              const realIndex = data.default_stages
-                .slice()
-                .sort((a, b) => a.order_index - b.order_index)
-                .findIndex((x) => x.id === s.id);
+          <ul className="mt-3 divide-y divide-line select-none">
+            {stages.map((s, visualIndex) => {
+              const realIndex = q
+                ? stageList.findIndex((x) => Number(x.id) === Number(s.id))
+                : visualIndex;
               return (
                 <li
                   key={s.id}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    onDropStage(s.id);
-                  }}
+                  data-stage-index={realIndex}
                   className={cn(
                     "flex min-h-[60px] items-center gap-2 py-2 transition-colors",
                     "hover:bg-surface/80",
-                    dragId === s.id && "opacity-60"
+                    dragIndex === realIndex && "bg-cream/60 opacity-80"
                   )}
                 >
-                  <button
-                    type="button"
-                    draggable={editingStageId !== s.id}
-                    onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/plain", String(s.id));
-                      setDragId(s.id);
-                    }}
-                    onDragEnd={() => setDragId(null)}
-                    className="inline-flex h-11 w-9 cursor-grab items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onPointerDown={onStagePointerDown(realIndex)}
+                    onPointerMove={onStagePointerMove}
+                    onPointerUp={onStagePointerUp}
+                    onPointerCancel={onStagePointerUp}
+                    className="inline-flex h-11 w-9 cursor-grab touch-none items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
                     aria-label="Переместить"
                     title="Перетащите"
                   >
-                    <GripVertical className="h-4 w-4" />
-                  </button>
+                    <GripVertical className="h-4 w-4 pointer-events-none" />
+                  </span>
                   <span className="w-7 shrink-0 text-center text-sm font-semibold text-muted">
                     {realIndex + 1}
                   </span>
                   {editingStageId === s.id ? (
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" data-no-drag>
                       <Input
                         value={editingStageName}
                         onChange={(e) => setEditingStageName(e.target.value)}
@@ -544,11 +584,12 @@ export default function SettingsPage() {
                           if (e.key === "Enter") {
                             const name = normalizeName(editingStageName);
                             if (!name) return setError("Название не может быть пустым");
-                            if (isDuplicate(name, data.default_stages, s.id))
+                            if (isDuplicate(name, stageList, s.id))
                               return setError("Такой этап уже есть");
-                            const next = data.default_stages.map((x) =>
-                              x.id === s.id ? { ...x, name } : x
+                            const next = stageList.map((x) =>
+                              Number(x.id) === Number(s.id) ? { ...x, name } : x
                             );
+                            applyStageOrder(next);
                             const ok = await saveSection("default_stages", next);
                             if (ok) setEditingStageId(null);
                           }
@@ -560,11 +601,12 @@ export default function SettingsPage() {
                         onClick={async () => {
                           const name = normalizeName(editingStageName);
                           if (!name) return setError("Название не может быть пустым");
-                          if (isDuplicate(name, data.default_stages, s.id))
+                          if (isDuplicate(name, stageList, s.id))
                             return setError("Такой этап уже есть");
-                          const next = data.default_stages.map((x) =>
-                            x.id === s.id ? { ...x, name } : x
+                          const next = stageList.map((x) =>
+                            Number(x.id) === Number(s.id) ? { ...x, name } : x
                           );
+                          applyStageOrder(next);
                           const ok = await saveSection("default_stages", next);
                           if (ok) setEditingStageId(null);
                         }}
@@ -582,40 +624,29 @@ export default function SettingsPage() {
                       </span>
                       <button
                         type="button"
+                        data-no-drag
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
                         aria-label="Выше"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void moveStage(s.id, -1);
-                        }}
-                        disabled={saving || realIndex === 0}
+                        onClick={() => moveStageAt(realIndex, -1)}
+                        disabled={realIndex <= 0}
                       >
                         <ChevronUp className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
+                        data-no-drag
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
                         aria-label="Ниже"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void moveStage(s.id, 1);
-                        }}
-                        disabled={
-                          saving ||
-                          realIndex === data.default_stages.length - 1
-                        }
+                        onClick={() => moveStageAt(realIndex, 1)}
+                        disabled={realIndex >= stageList.length - 1}
                       >
                         <ChevronDown className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
+                        data-no-drag
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
                         aria-label="Редактировать"
-                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={() => {
                           setEditingStageId(s.id);
                           setEditingStageName(s.name);
@@ -625,9 +656,9 @@ export default function SettingsPage() {
                       </button>
                       <button
                         type="button"
+                        data-no-drag
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
                         aria-label="Удалить"
-                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={async () => {
                           if (
                             !window.confirm(
@@ -635,9 +666,10 @@ export default function SettingsPage() {
                             )
                           )
                             return;
-                          const next = data.default_stages
-                            .filter((x) => x.id !== s.id)
+                          const next = stageList
+                            .filter((x) => Number(x.id) !== Number(s.id))
                             .map((x, i) => ({ ...x, order_index: i }));
+                          applyStageOrder(next);
                           await saveSection("default_stages", next);
                         }}
                       >

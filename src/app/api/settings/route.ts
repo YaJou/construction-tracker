@@ -48,9 +48,18 @@ async function loadSettings() {
     ]);
 
   const managers = managersRes.data ?? [];
+  if (stagesRes.error) {
+    console.warn("setting_default_stages:", stagesRes.error.message);
+  }
   const default_stages =
-    stagesRes.data && stagesRes.data.length > 0
-      ? stagesRes.data
+    !stagesRes.error && stagesRes.data && stagesRes.data.length > 0
+      ? [...stagesRes.data]
+          .map((s, i) => ({
+            id: Number(s.id),
+            name: s.name,
+            order_index: typeof s.order_index === "number" ? s.order_index : i,
+          }))
+          .sort((a, b) => a.order_index - b.order_index)
       : DEFAULT_STAGES.map((name, i) => ({ id: i + 1, name, order_index: i }));
   const object_types =
     typesRes.data && typesRes.data.length > 0
@@ -169,50 +178,65 @@ export async function PATCH(request: Request) {
     }
 
     if (body.default_stages !== undefined && Array.isArray(body.default_stages)) {
-      const rows = body.default_stages.map(
-        (s: { id?: number; name: string; order_index?: number }, i: number) => ({
+      const rows = (body.default_stages as { id?: number; name: string; order_index?: number }[]).map(
+        (s, i) => ({
           id: typeof s.id === "number" ? s.id : i + 1,
-          name: s.name,
-          order_index: s.order_index ?? i,
+          name: String(s.name ?? "").trim(),
+          order_index: typeof s.order_index === "number" ? s.order_index : i,
         })
       );
 
-      const { data: existing, error: existingError } = await supabase
+      if (rows.some((r) => !r.name)) {
+        return NextResponse.json({ error: "Название этапа не может быть пустым" }, { status: 400 });
+      }
+
+      // Full replace: update-in-place fails silently under RLS (0 rows, no error).
+      const { error: delError } = await supabase
         .from("setting_default_stages")
-        .select("id");
-      if (existingError) {
+        .delete()
+        .not("id", "is", null);
+      if (delError) {
         return NextResponse.json(
-          { error: `Не удалось прочитать этапы: ${existingError.message}` },
+          {
+            error: `Не удалось обновить этапы: ${delError.message}. В Supabase SQL Editor выполните: alter table public.setting_default_stages disable row level security;`,
+          },
           { status: 500 }
         );
       }
 
-      const incomingIds = new Set(rows.map((r) => r.id));
-      const toDelete = (existing ?? []).map((r) => r.id).filter((id) => !incomingIds.has(id));
-
-      if (toDelete.length > 0) {
-        const { error: delError } = await supabase
-          .from("setting_default_stages")
-          .delete()
-          .in("id", toDelete);
-        if (delError) {
+      if (rows.length > 0) {
+        const { error: insError } = await supabase.from("setting_default_stages").insert(rows);
+        if (insError) {
           return NextResponse.json(
-            { error: `Не удалось удалить этапы: ${delError.message}` },
+            {
+              error: `Не удалось сохранить этапы: ${insError.message}. Проверьте RLS: alter table public.setting_default_stages disable row level security;`,
+            },
             { status: 500 }
           );
         }
       }
 
-      if (rows.length > 0) {
-        const { error: upsertError } = await supabase
-          .from("setting_default_stages")
-          .upsert(rows, { onConflict: "id" });
-        if (upsertError) {
-          return NextResponse.json(
-            { error: `Не удалось сохранить этапы: ${upsertError.message}` },
-            { status: 500 }
-          );
-        }
+      // Verify order actually persisted (RLS can no-op writes without error)
+      const { data: verify, error: verifyError } = await supabase
+        .from("setting_default_stages")
+        .select("id, name, order_index")
+        .order("order_index");
+      if (verifyError) {
+        return NextResponse.json(
+          { error: `Этапы записаны, но не читаются: ${verifyError.message}` },
+          { status: 500 }
+        );
+      }
+      const got = (verify ?? []).map((r) => `${r.id}:${r.order_index}`).join(",");
+      const want = rows.map((r) => `${r.id}:${r.order_index}`).join(",");
+      if (got !== want) {
+        return NextResponse.json(
+          {
+            error:
+              "Порядок этапов не сохранился (вероятно RLS). В Supabase SQL Editor: alter table public.setting_default_stages disable row level security;",
+          },
+          { status: 500 }
+        );
       }
     }
 

@@ -5,9 +5,11 @@
 2. Paste and run `supabase/migrations/20260316_p0_auth_profiles_foreman.sql`.
 3. Enable Email auth in Authentication → Providers.
 
-## 2. Если статусы в «Справочниках» не сохраняются
+## 2. Если статусы / порядок этапов в «Справочниках» не сохраняются
 1. Open SQL Editor → New query.
 2. Paste and run `supabase/migrations/20260316_fix_status_labels_access.sql`.
+3. Also run `supabase/migrations/20260316_settings_tables_rls_off.sql`
+   (отключает RLS на таблицах справочников — иначе порядок этапов «не двигается»).
 
 ## 3. Auth (обязательный вход)
 См. подробности: [AUTH.md](./AUTH.md)
