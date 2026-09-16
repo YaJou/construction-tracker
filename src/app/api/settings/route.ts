@@ -13,6 +13,17 @@ const DEFAULT_OBJECT_TYPES = [
   "Реконструкция",
 ];
 
+function settingsTableHint(message: string, table: string) {
+  const missing =
+    /schema cache|Could not find the table|does not exist|relation .* does not exist/i.test(
+      message
+    );
+  if (missing) {
+    return `Таблица ${table} ещё не создана. В Supabase SQL Editor выполните файл supabase/migrations/20260316_create_settings_directories.sql`;
+  }
+  return `В Supabase SQL Editor: alter table public.${table} disable row level security;`;
+}
+
 async function loadStatusOverrides(kind: "project" | "stage") {
   const { data, error } = await supabase
     .from("setting_status_labels")
@@ -198,7 +209,7 @@ export async function PATCH(request: Request) {
       if (delError) {
         return NextResponse.json(
           {
-            error: `Не удалось обновить этапы: ${delError.message}. В Supabase SQL Editor выполните: alter table public.setting_default_stages disable row level security;`,
+            error: `Не удалось обновить этапы: ${delError.message}. ${settingsTableHint(delError.message, "setting_default_stages")}`,
           },
           { status: 500 }
         );
@@ -209,7 +220,7 @@ export async function PATCH(request: Request) {
         if (insError) {
           return NextResponse.json(
             {
-              error: `Не удалось сохранить этапы: ${insError.message}. Проверьте RLS: alter table public.setting_default_stages disable row level security;`,
+              error: `Не удалось сохранить этапы: ${insError.message}. ${settingsTableHint(insError.message, "setting_default_stages")}`,
             },
             { status: 500 }
           );
@@ -223,7 +234,9 @@ export async function PATCH(request: Request) {
         .order("order_index");
       if (verifyError) {
         return NextResponse.json(
-          { error: `Этапы записаны, но не читаются: ${verifyError.message}` },
+          {
+            error: `Этапы записаны, но не читаются: ${verifyError.message}. ${settingsTableHint(verifyError.message, "setting_default_stages")}`,
+          },
           { status: 500 }
         );
       }
@@ -232,8 +245,7 @@ export async function PATCH(request: Request) {
       if (got !== want) {
         return NextResponse.json(
           {
-            error:
-              "Порядок этапов не сохранился (вероятно RLS). В Supabase SQL Editor: alter table public.setting_default_stages disable row level security;",
+            error: `Порядок этапов не сохранился. ${settingsTableHint("schema cache", "setting_default_stages")}`,
           },
           { status: 500 }
         );

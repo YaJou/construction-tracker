@@ -336,11 +336,12 @@ export default function SettingsPage() {
   };
 
   const persistStagesOrder = async (ordered: SettingDefaultStage[]) => {
+    const snapshot = stageListRef.current;
     const next = applyStageOrder(ordered);
     const ok = await saveSection("default_stages", next);
     if (!ok) {
-      // оставляем новый порядок на экране, чтобы правки не пропали;
-      // ошибка уже в setError
+      stageListRef.current = snapshot;
+      setStageList(snapshot);
     }
   };
 

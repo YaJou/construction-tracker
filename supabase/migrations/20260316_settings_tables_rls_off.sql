@@ -1,6 +1,6 @@
 -- Settings directories are managed via server API with the anon key.
--- RLS with no policies makes writes appear to succeed (0 rows) and order never changes.
--- Run once in Supabase SQL Editor if stage reorder / manager saves fail.
+-- Prefer 20260316_create_settings_directories.sql (creates tables + disables RLS).
+-- Use this only if tables already exist and writes are blocked by RLS.
 
 alter table if exists public.setting_default_stages disable row level security;
 alter table if exists public.setting_managers disable row level security;
