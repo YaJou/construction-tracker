@@ -114,7 +114,9 @@ export function ProjectSmetaSection({ projectId }: { projectId: number }) {
       const json = await res.json();
       if (!res.ok) {
         setError(json.error || "Ошибка");
-        if (json.code === "SMETA_TABLES_MISSING") setData(json);
+        if (json.code === "SMETA_TABLES_MISSING" || json.code === "SMETA_RLS") {
+          setData(json);
+        }
         return;
       }
       applyData(json);
@@ -152,14 +154,21 @@ export function ProjectSmetaSection({ projectId }: { projectId: number }) {
     );
   }
 
-  if (data?.code === "SMETA_TABLES_MISSING" || error.includes("Таблицы сметы")) {
+  if (data?.code === "SMETA_TABLES_MISSING" || data?.code === "SMETA_RLS" || error.includes("Таблицы сметы") || error.includes("RLS")) {
     return (
       <div className="rounded-[18px] border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
-        <p className="font-semibold">Нужно создать таблицы сметы в Supabase</p>
+        <p className="font-semibold">Нужно открыть запись сметы в Supabase</p>
         <p className="mt-2 text-amber-900/90">
-          Откройте SQL Editor и выполните файл{" "}
-          <code className="rounded bg-white/70 px-1">supabase/migrations/20260917_project_smeta.sql</code>
+          Скопируйте и выполните в SQL Editor:
         </p>
+        <pre className="mt-3 overflow-x-auto rounded-[10px] bg-white/80 p-3 text-[11px] leading-relaxed text-ink">
+{`alter table public.project_smeta_sections disable row level security;
+alter table public.project_smeta_items disable row level security;
+grant all on table public.project_smeta_sections to anon, authenticated, service_role;
+grant all on table public.project_smeta_items to anon, authenticated, service_role;
+grant usage, select on all sequences in schema public to anon, authenticated, service_role;`}
+        </pre>
+        <p className="mt-2 text-xs text-amber-900/80">{error}</p>
         <Button className="mt-4" size="sm" variant="secondary" onClick={() => void load()}>
           Проверить снова
         </Button>

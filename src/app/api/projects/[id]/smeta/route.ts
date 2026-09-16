@@ -15,7 +15,7 @@ async function getProjectId(params: Promise<{ id: string }>) {
   return Number((await params).id);
 }
 
-function mapMissingTable(error: { message?: string; code?: string } | null) {
+function mapDbError(error: { message?: string; code?: string; details?: string; hint?: string } | null) {
   const msg = error?.message || "";
   if (
     error?.code === "42P01" ||
@@ -26,6 +26,18 @@ function mapMissingTable(error: { message?: string; code?: string } | null) {
         error:
           "Таблицы сметы ещё не созданы. Выполните SQL из supabase/migrations/20260917_project_smeta.sql в Supabase.",
         code: "SMETA_TABLES_MISSING",
+        details: msg,
+      },
+      { status: 503 }
+    );
+  }
+  if (/row-level security|RLS|permission denied|42501/i.test(msg)) {
+    return NextResponse.json(
+      {
+        error:
+          "Запись в смету заблокирована (RLS). В Supabase SQL Editor выполните: alter table public.project_smeta_sections disable row level security; alter table public.project_smeta_items disable row level security; grant all on public.project_smeta_sections to anon, authenticated; grant all on public.project_smeta_items to anon, authenticated; grant usage, select on all sequences in schema public to anon, authenticated;",
+        code: "SMETA_RLS",
+        details: msg,
       },
       { status: 503 }
     );
@@ -134,7 +146,7 @@ export async function GET(
 
     const loaded = await loadSmeta(projectId);
     if (loaded.error) {
-      const missing = mapMissingTable(loaded.error);
+      const missing = mapDbError(loaded.error);
       if (missing) return missing;
       console.error(loaded.error);
       return NextResponse.json({ error: "Ошибка загрузки сметы" }, { status: 500 });
@@ -182,7 +194,7 @@ export async function POST(
 
       const loaded = await loadSmeta(projectId);
       if (loaded.error) {
-        const missing = mapMissingTable(loaded.error);
+        const missing = mapDbError(loaded.error);
         if (missing) return missing;
         return NextResponse.json({ error: "Ошибка сметы" }, { status: 500 });
       }
@@ -197,10 +209,16 @@ export async function POST(
       const orderIndex = loaded.sections!.length;
       const inserted = await insertSectionWithItems(projectId, template, orderIndex);
       if (inserted.error) {
-        const missing = mapMissingTable(inserted.error);
-        if (missing) return missing;
+        const mapped = mapDbError(inserted.error);
+        if (mapped) return mapped;
         console.error(inserted.error);
-        return NextResponse.json({ error: "Не удалось добавить раздел" }, { status: 500 });
+        return NextResponse.json(
+          {
+            error: `Не удалось добавить раздел: ${inserted.error.message || "ошибка БД"}`,
+            details: inserted.error.message,
+          },
+          { status: 500 }
+        );
       }
 
       await supabase.from("activity_log").insert({
@@ -219,7 +237,7 @@ export async function POST(
     if (action === "add_all_templates") {
       const loaded = await loadSmeta(projectId);
       if (loaded.error) {
-        const missing = mapMissingTable(loaded.error);
+        const missing = mapDbError(loaded.error);
         if (missing) return missing;
         return NextResponse.json({ error: "Ошибка сметы" }, { status: 500 });
       }
@@ -233,10 +251,16 @@ export async function POST(
         if (existing.has(template.name.toLowerCase())) continue;
         const inserted = await insertSectionWithItems(projectId, template, orderIndex);
         if (inserted.error) {
-          const missing = mapMissingTable(inserted.error);
-          if (missing) return missing;
+          const mapped = mapDbError(inserted.error);
+          if (mapped) return mapped;
           console.error(inserted.error);
-          return NextResponse.json({ error: "Не удалось заполнить смету" }, { status: 500 });
+          return NextResponse.json(
+            {
+              error: `Не удалось заполнить смету: ${inserted.error.message || "ошибка БД"}`,
+              details: inserted.error.message,
+            },
+            { status: 500 }
+          );
         }
         orderIndex += 1;
         added += 1;
@@ -293,7 +317,7 @@ export async function POST(
       });
 
       if (error) {
-        const missing = mapMissingTable(error);
+        const missing = mapDbError(error);
         if (missing) return missing;
         console.error(error);
         return NextResponse.json({ error: "Не удалось добавить позицию" }, { status: 500 });
@@ -334,7 +358,7 @@ export async function POST(
         .eq("project_id", projectId);
 
       if (error) {
-        const missing = mapMissingTable(error);
+        const missing = mapDbError(error);
         if (missing) return missing;
         console.error(error);
         return NextResponse.json({ error: "Не удалось сохранить позицию" }, { status: 500 });
@@ -352,7 +376,7 @@ export async function POST(
         .eq("id", itemId)
         .eq("project_id", projectId);
       if (error) {
-        const missing = mapMissingTable(error);
+        const missing = mapDbError(error);
         if (missing) return missing;
         return NextResponse.json({ error: "Не удалось удалить позицию" }, { status: 500 });
       }
@@ -368,7 +392,7 @@ export async function POST(
         .eq("id", sectionId)
         .eq("project_id", projectId);
       if (error) {
-        const missing = mapMissingTable(error);
+        const missing = mapDbError(error);
         if (missing) return missing;
         return NextResponse.json({ error: "Не удалось удалить раздел" }, { status: 500 });
       }
