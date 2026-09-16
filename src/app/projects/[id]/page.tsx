@@ -123,6 +123,8 @@ export default function ProjectPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditingCard, setIsEditingCard] = useState(false);
   const [editClient, setEditClient] = useState("");
+  const [editManager, setEditManager] = useState("");
+  const [editForeman, setEditForeman] = useState("");
   const [editStartDate, setEditStartDate] = useState("");
   const [editPlannedEndDate, setEditPlannedEndDate] = useState("");
   const [editBudget, setEditBudget] = useState("");
@@ -135,6 +137,7 @@ export default function ProjectPage() {
   const [editStageName, setEditStageName] = useState("");
   const [editStageStartDate, setEditStageStartDate] = useState("");
   const [editStageEndDate, setEditStageEndDate] = useState("");
+  const [editStageResponsible, setEditStageResponsible] = useState("");
   const [savingStage, setSavingStage] = useState(false);
   const [editingCommentStageId, setEditingCommentStageId] = useState<number | null>(null);
   const [editStageComment, setEditStageComment] = useState("");
@@ -151,7 +154,10 @@ export default function ProjectPage() {
   const [stagesInitialized, setStagesInitialized] = useState(false);
   const [overviewPhotos, setOverviewPhotos] = useState<OverviewPhoto[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategoryRow[]>([]);
-  const [cardSettings, setCardSettings] = useState<{ object_types: { id: number; name: string }[] }>({
+  const [cardSettings, setCardSettings] = useState<{
+    object_types: { id: number; name: string }[];
+    managers: { id: number; name: string }[];
+  }>({
     object_types: [
       { id: 1, name: "Коттедж" },
       { id: 2, name: "ЖК" },
@@ -159,6 +165,7 @@ export default function ProjectPage() {
       { id: 4, name: "Коммерческое здание" },
       { id: 5, name: "Реконструкция" },
     ],
+    managers: [],
   });
 
   useEffect(() => {
@@ -170,8 +177,13 @@ export default function ProjectPage() {
       { id: 5, name: "Реконструкция" },
     ];
     fetch("/api/settings")
-      .then((r) => (r.ok ? r.json() : { object_types: defaults }))
-      .then((s) => setCardSettings({ object_types: s.object_types?.length ? s.object_types : defaults }))
+      .then((r) => (r.ok ? r.json() : { object_types: defaults, managers: [] }))
+      .then((s) =>
+        setCardSettings({
+          object_types: s.object_types?.length ? s.object_types : defaults,
+          managers: s.managers ?? [],
+        })
+      )
       .catch(() => setCardSettings((prev) => ({ ...prev })));
   }, []);
 
@@ -234,11 +246,18 @@ export default function ProjectPage() {
     refetch();
   };
 
-  const startEditingStage = (stage: { id: number; name: string; start_date: string | null; end_date: string | null }) => {
+  const startEditingStage = (stage: {
+    id: number;
+    name: string;
+    start_date: string | null;
+    end_date: string | null;
+    responsible?: string | null;
+  }) => {
     setEditingStageId(stage.id);
     setEditStageName(stage.name);
     setEditStageStartDate(stage.start_date || "");
     setEditStageEndDate(stage.end_date || "");
+    setEditStageResponsible(stage.responsible || "");
   };
 
   const saveStageEdit = async () => {
@@ -254,6 +273,7 @@ export default function ProjectPage() {
           ...(editStageName.trim() && { name: editStageName.trim() }),
           start_date: editStageStartDate || null,
           end_date: editStageEndDate || null,
+          responsible: editStageResponsible.trim() || null,
         }),
       });
       refetch();
@@ -376,14 +396,17 @@ export default function ProjectPage() {
     }
   };
 
-  const handleExportReport = () => {
+  const handleExportReport = (mode: "full" | "client" = "full") => {
     if (!project) return;
-    window.open(`/api/reports/${project.id}`, "_blank");
+    const q = mode === "client" ? "print=1&mode=client" : "print=1&mode=full";
+    window.open(`/reports/${project.id}?${q}`, "_blank");
   };
 
   const startEditingCard = () => {
     if (!project) return;
     setEditClient(project.client);
+    setEditManager(project.manager || "");
+    setEditForeman(project.foreman || "");
     setEditStartDate(project.start_date || "");
     setEditPlannedEndDate(project.planned_end_date || "");
     setEditBudget(formatThousands(String(project.budget)));
@@ -404,6 +427,8 @@ export default function ProjectPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client: editClient.trim() || project.client,
+          manager: editManager.trim() || null,
+          foreman: editForeman.trim() || null,
           start_date: editStartDate || null,
           planned_end_date: editPlannedEndDate || null,
           budget: Number.isNaN(budgetNum) ? project.budget : budgetNum,
@@ -583,6 +608,29 @@ export default function ProjectPage() {
                       <div>
                         <label className="block text-xs font-medium text-muted mb-1">Завершён</label>
                         <Input type="date" value={editStageEndDate} onChange={(e) => setEditStageEndDate(e.target.value)} />
+                      </div>
+                      <div className="sm:col-span-2 lg:col-span-4">
+                        <label className="block text-xs font-medium text-muted mb-1">Ответственный этапа</label>
+                        {cardSettings.managers.length > 0 ? (
+                          <Select
+                            value={editStageResponsible}
+                            onChange={(e) => setEditStageResponsible(e.target.value)}
+                            aria-label="Ответственный этапа"
+                          >
+                            <option value="">Не назначен</option>
+                            {cardSettings.managers.map((m) => (
+                              <option key={m.id} value={m.name}>
+                                {m.name}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <Input
+                            value={editStageResponsible}
+                            onChange={(e) => setEditStageResponsible(e.target.value)}
+                            placeholder="ФИО прораба / ответственного"
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -894,7 +942,7 @@ export default function ProjectPage() {
               <Pencil className="w-4 h-4 mr-2" />
               Редактировать
             </Button>
-            <Button onClick={handleExportReport} variant="secondary" className="shrink-0">
+            <Button onClick={() => handleExportReport("full")} variant="secondary" className="shrink-0">
               <FileText className="w-4 h-4 mr-2" />
               Отчёт PDF
             </Button>
@@ -1083,6 +1131,36 @@ export default function ProjectPage() {
                       />
                     </div>
                     <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Менеджер</label>
+                      {cardSettings.managers.length > 0 ? (
+                        <Select value={editManager} onChange={(e) => setEditManager(e.target.value)} aria-label="Менеджер">
+                          <option value="">Не выбран</option>
+                          {cardSettings.managers.map((m) => (
+                            <option key={m.id} value={m.name}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input value={editManager} onChange={(e) => setEditManager(e.target.value)} placeholder="ФИО" />
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Прораб</label>
+                      {cardSettings.managers.length > 0 ? (
+                        <Select value={editForeman} onChange={(e) => setEditForeman(e.target.value)} aria-label="Прораб">
+                          <option value="">Не выбран</option>
+                          {cardSettings.managers.map((m) => (
+                            <option key={`f-${m.id}`} value={m.name}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input value={editForeman} onChange={(e) => setEditForeman(e.target.value)} placeholder="ФИО прораба" />
+                      )}
+                    </div>
+                    <div>
                       <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Тип объекта</label>
                       {cardSettings.object_types.length > 0 ? (
                         <Select value={editObjectType} onChange={(e) => setEditObjectType(e.target.value)}>
@@ -1163,6 +1241,14 @@ export default function ProjectPage() {
                       <Phone className="w-3.5 h-3.5" /> Телефон
                     </dt>
                     <dd className="mt-0.5 text-ink">{project.phone || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted">Менеджер</dt>
+                    <dd className="mt-0.5 font-medium text-ink">{project.manager || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted">Прораб</dt>
+                    <dd className="mt-0.5 font-medium text-ink">{project.foreman || "—"}</dd>
                   </div>
                   <div>
                     <dt className="text-caption text-muted flex items-center gap-1">
@@ -1309,7 +1395,7 @@ export default function ProjectPage() {
               {
                 label: "Отчёт PDF",
                 icon: FileText,
-                onClick: handleExportReport,
+                onClick: () => handleExportReport("full"),
               },
             ].map(({ label, icon: Icon, onClick }) => (
               <button

@@ -133,7 +133,7 @@ function MarketingHeader() {
 
         <div className="hidden sm:flex items-center gap-2">
           <Link
-            href="/dashboard"
+            href="/login"
             className="px-3 py-2 rounded-btn text-sm font-medium text-muted hover:text-ink transition-colors duration-fast min-h-[44px] inline-flex items-center"
           >
             Войти
@@ -175,7 +175,7 @@ function MarketingHeader() {
           ))}
           <div className="pt-3 flex flex-col gap-2">
             <Link
-              href="/dashboard"
+              href="/login"
               className="inline-flex items-center justify-center rounded-btn border border-line px-4 py-3 text-sm font-semibold text-ink min-h-[44px]"
               onClick={() => setOpen(false)}
             >

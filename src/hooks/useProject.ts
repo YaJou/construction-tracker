@@ -35,6 +35,7 @@ export interface ProjectDetail {
   status: string;
   budget: number;
   manager: string | null;
+  foreman?: string | null;
   object_type?: string | null;
   area_sqm?: number | null;
   note?: string | null;

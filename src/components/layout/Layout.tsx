@@ -71,14 +71,18 @@ function SidebarNav({
         })}
       </nav>
       <div className="mt-auto border-t border-line p-3">
-        <div className="flex items-center gap-2.5 mb-2 px-1">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-green/10 text-green text-sm font-semibold">
-            М
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink truncate">Менеджер</p>
-            <p className="text-caption text-muted truncate">Роль: руководитель</p>
-          </div>
+        <div className="mb-2 px-1">
+          <p className="text-sm font-semibold text-ink">Аккаунт</p>
+          <p className="text-caption text-muted">
+            Авторизация подключается. Пока доступ открыт для команды.
+          </p>
+          <Link
+            href="/login"
+            onClick={onNavigate}
+            className="mt-2 inline-flex h-[42px] items-center rounded-[10px] border border-line px-3 text-sm font-medium text-ink hover:bg-surface"
+          >
+            Войти
+          </Link>
         </div>
         <Link
           href="/settings"

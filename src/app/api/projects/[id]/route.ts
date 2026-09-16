@@ -109,6 +109,7 @@ export async function PATCH(
       "status",
       "budget",
       "manager",
+      "foreman",
       "object_type",
       "area_sqm",
       "note",
@@ -124,10 +125,18 @@ export async function PATCH(
 
     updates.updated_at = new Date().toISOString();
 
-    const { error: updateError } = await supabase
+    let { error: updateError } = await supabase
       .from("projects")
       .update(updates)
       .eq("id", id);
+
+    if (updateError && String(updateError.message || "").includes("foreman")) {
+      delete updates.foreman;
+      ({ error: updateError } = await supabase
+        .from("projects")
+        .update(updates)
+        .eq("id", id));
+    }
 
     if (updateError) {
       console.error(updateError);

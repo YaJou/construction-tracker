@@ -86,6 +86,9 @@ export async function GET(request: Request) {
     const responsibles = [
       ...new Set([
         ...settingsManagers,
+        ...(allProjectsForOptions
+          .map((p) => (p as { foreman?: string | null }).foreman)
+          .filter(Boolean) as string[]),
         ...(allStagesForOptions ?? [])
           .map((s) => s.responsible)
           .filter(Boolean) as string[],
@@ -124,7 +127,12 @@ export async function GET(request: Request) {
       );
 
     if (foremanFilter) {
-      // Берём id проектов, у которых есть этап с нужным responsible
+      const matchedIds = new Set<number>();
+      for (const p of projects) {
+        if ((p as { foreman?: string | null }).foreman === foremanFilter) {
+          matchedIds.add(p.id);
+        }
+      }
       const { data: stagesForFilter, error: stagesForFilterError } =
         await supabase
           .from("stages")
@@ -134,11 +142,8 @@ export async function GET(request: Request) {
       if (stagesForFilterError) {
         console.error(stagesForFilterError);
       }
-
-      const allowedProjectIds = new Set(
-        (stagesForFilter ?? []).map((s) => s.project_id)
-      );
-      projects = projects.filter((p) => allowedProjectIds.has(p.id));
+      for (const s of stagesForFilter ?? []) matchedIds.add(s.project_id);
+      projects = projects.filter((p) => matchedIds.has(p.id));
     }
 
     const todayStart = new Date();
@@ -266,6 +271,7 @@ export async function POST(request: Request) {
       status,
       budget,
       manager,
+      foreman,
       object_type,
       area_sqm,
       note,
@@ -278,35 +284,51 @@ export async function POST(request: Request) {
       );
     }
 
+    const projectPayload: Record<string, unknown> = {
+      name: String(name).trim(),
+      client: String(client).trim(),
+      address: String(address).trim(),
+      phone:
+        phone != null && String(phone).trim()
+          ? String(phone).trim()
+          : null,
+      start_date: start_date || null,
+      planned_end_date: planned_end_date || null,
+      status: status || "planning",
+      budget: budget ?? 0,
+      manager: manager || null,
+      object_type:
+        object_type != null && String(object_type).trim()
+          ? String(object_type).trim()
+          : null,
+      area_sqm:
+        area_sqm != null && area_sqm !== "" ? Number(area_sqm) : null,
+      note:
+        note != null && String(note).trim()
+          ? String(note).trim()
+          : null,
+    };
+    if (foreman !== undefined) {
+      projectPayload.foreman =
+        foreman != null && String(foreman).trim() ? String(foreman).trim() : null;
+    }
+
     // 1. Создаём проект
-    const { data: inserted, error: insertError } = await supabase
+    let { data: inserted, error: insertError } = await supabase
       .from("projects")
-      .insert({
-        name: String(name).trim(),
-        client: String(client).trim(),
-        address: String(address).trim(),
-        phone:
-          phone != null && String(phone).trim()
-            ? String(phone).trim()
-            : null,
-        start_date: start_date || null,
-        planned_end_date: planned_end_date || null,
-        status: status || "planning",
-        budget: budget ?? 0,
-        manager: manager || null,
-        object_type:
-          object_type != null && String(object_type).trim()
-            ? String(object_type).trim()
-            : null,
-        area_sqm:
-          area_sqm != null && area_sqm !== "" ? Number(area_sqm) : null,
-        note:
-          note != null && String(note).trim()
-            ? String(note).trim()
-            : null,
-      })
+      .insert(projectPayload)
       .select("id")
       .single();
+
+    // Backward-compatible if foreman column not migrated yet
+    if (insertError && String(insertError.message || "").includes("foreman")) {
+      delete projectPayload.foreman;
+      ({ data: inserted, error: insertError } = await supabase
+        .from("projects")
+        .insert(projectPayload)
+        .select("id")
+        .single());
+    }
 
     if (insertError || !inserted) {
       console.error(insertError);

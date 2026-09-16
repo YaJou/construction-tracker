@@ -42,71 +42,34 @@ const LIST_TABS: { value: ListType; label: string }[] = [
   { value: "archived", label: "Архив" },
 ];
 
-const DEMO_PROJECTS: ProjectListItem[] = [
-  {
-    id: -1,
-    name: "Дом 87 м²",
-    client: "Иванов А.П.",
-    address: "СНТ Малинки, уч. 14",
-    start_date: null,
-    planned_end_date: new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10),
-    status: "construction",
-    budget: 6500000,
-    manager: "Петров С.И.",
-    progress_percent: 65,
-    active_stages: 1,
-    total_stages: 10,
-    completed_stages: 4,
-    updated_at: new Date().toISOString(),
-    preview_photos: [],
-    last_activity_at: new Date().toISOString(),
-    last_activity_summary: "Добавлено фото",
-    today_photos_count: 2,
-    total_spent: 420000,
-  },
-  {
-    id: -2,
-    name: "Таунхаус, уч. 12",
-    client: "ООО «Север»",
-    address: "г. Москва, ул. Лесная, 8",
-    start_date: null,
-    planned_end_date: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
-    status: "planning",
-    budget: 4200000,
-    manager: "Сидорова Е.В.",
-    progress_percent: 22,
-    active_stages: 1,
-    total_stages: 8,
-    completed_stages: 1,
-    updated_at: new Date().toISOString(),
-    preview_photos: [],
-    last_activity_at: new Date(Date.now() - 9 * 86400000).toISOString(),
-    last_activity_summary: "Создан проект",
-    today_photos_count: 0,
-    total_spent: 186000,
-  },
-  {
-    id: -3,
-    name: "Коттедж «Сосны»",
-    client: "Кузнецов И.И.",
-    address: "МО, д. Сосны, 3",
-    start_date: null,
-    planned_end_date: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10),
-    status: "construction",
-    budget: 9800000,
-    manager: "Петров С.И.",
-    progress_percent: 81,
-    active_stages: 2,
-    total_stages: 10,
-    completed_stages: 7,
-    updated_at: new Date().toISOString(),
-    preview_photos: [],
-    last_activity_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-    last_activity_summary: "Добавлен расход",
-    today_photos_count: 0,
-    total_spent: 10100000,
-  },
-];
+/** Demo cards only when NEXT_PUBLIC_DEMO_MODE=true — never mixed into production by default. */
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+
+const DEMO_PROJECTS: ProjectListItem[] = DEMO_MODE
+  ? [
+      {
+        id: -1,
+        name: "Дом 87 м²",
+        client: "Иванов А.П.",
+        address: "СНТ Малинки, уч. 14",
+        start_date: null,
+        planned_end_date: new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10),
+        status: "construction",
+        budget: 6500000,
+        manager: "Петров С.И.",
+        progress_percent: 65,
+        active_stages: 1,
+        total_stages: 10,
+        completed_stages: 4,
+        updated_at: new Date().toISOString(),
+        preview_photos: [],
+        last_activity_at: new Date().toISOString(),
+        last_activity_summary: "Добавлено фото",
+        today_photos_count: 2,
+        total_spent: 420000,
+      },
+    ]
+  : [];
 
 function formatMoney(n: number) {
   return `${new Intl.NumberFormat("ru-RU").format(Math.round(n))} ₽`;
@@ -159,6 +122,11 @@ export default function DashboardPage() {
     comment: string | null;
   } | null>(null);
   const [kpiProjects, setKpiProjects] = useState<ProjectListItem[]>([]);
+  const [periodStats, setPeriodStats] = useState<{
+    spent_in_period: number;
+    completed_stages_this_month: number;
+    budget: number;
+  } | null>(null);
   const [todayData, setTodayData] = useState<{
     projects: { id: number; name: string; highlights: string[] }[];
   } | null>(null);
@@ -193,10 +161,29 @@ export default function DashboardPage() {
       .catch(() => setKpiProjects([]));
   }, []);
 
+  const loadPeriodStats = useCallback(() => {
+    fetch(`/api/dashboard/kpi?period=${period}&_t=${Date.now()}`, {
+      cache: "no-store",
+    })
+      .then((r) => r.json())
+      .then((json) =>
+        setPeriodStats({
+          spent_in_period: Number(json.spent_in_period) || 0,
+          completed_stages_this_month: Number(json.completed_stages_this_month) || 0,
+          budget: Number(json.budget) || 0,
+        })
+      )
+      .catch(() => setPeriodStats(null));
+  }, [period]);
+
   useEffect(() => {
     loadToday();
     loadKpi();
   }, [loadToday, loadKpi, pathname]);
+
+  useEffect(() => {
+    loadPeriodStats();
+  }, [loadPeriodStats, pathname]);
 
   useEffect(() => {
     const refresh = () => {
@@ -204,6 +191,7 @@ export default function DashboardPage() {
         refetch();
         loadToday();
         loadKpi();
+        loadPeriodStats();
       }
     };
     window.addEventListener("focus", refresh);
@@ -212,7 +200,7 @@ export default function DashboardPage() {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [refetch, loadToday, loadKpi]);
+  }, [refetch, loadToday, loadKpi, loadPeriodStats]);
 
   useEffect(() => {
     const close = () => setMenuOpenId(null);
@@ -247,8 +235,9 @@ export default function DashboardPage() {
 
   const displayProjects = useMemo(() => {
     if (loading) return [];
-    if (sortedProjects.length === 0) return [];
-    if (sortedProjects.length >= 3) return sortedProjects;
+    if (!DEMO_MODE || sortedProjects.length === 0 || sortedProjects.length >= 3) {
+      return sortedProjects;
+    }
     const pad = DEMO_PROJECTS.filter(
       (d) => !sortedProjects.some((p) => p.name === d.name)
     ).slice(0, 3 - sortedProjects.length);
@@ -267,10 +256,11 @@ export default function DashboardPage() {
           new Date(a.planned_end_date!).getTime() -
           new Date(b.planned_end_date!).getTime()
       )[0];
-    const spent = source.reduce((s, p) => s + (p.total_spent ?? 0), 0);
-    const budget = source.reduce((s, p) => s + (p.budget ?? 0), 0);
-    return { activeCount, nearest, spent, budget };
-  }, [kpiProjects]);
+    const spent = periodStats?.spent_in_period ?? 0;
+    const budget = periodStats?.budget ?? source.reduce((s, p) => s + (p.budget ?? 0), 0);
+    const completedThisMonth = periodStats?.completed_stages_this_month ?? 0;
+    return { activeCount, nearest, spent, budget, completedThisMonth };
+  }, [kpiProjects, periodStats]);
 
   const attentionItems = useMemo(() => {
     const items: {
@@ -588,7 +578,7 @@ export default function DashboardPage() {
           {
             icon: CheckCircle2,
             label: "Готово в этом месяце",
-            value: "нет данных",
+            value: periodStats ? String(kpi.completedThisMonth) : "…",
             hint: "завершённых этапов",
           },
           {
@@ -602,11 +592,15 @@ export default function DashboardPage() {
           {
             icon: Wallet,
             label: "Расходы за период",
-            value: kpiProjects.length ? formatMoney(kpi.spent) : "нет данных",
+            value: periodStats ? formatMoney(kpi.spent) : "…",
             hint:
               kpi.budget > 0
-                ? `план ${formatMoney(kpi.budget)} · по активным объектам`
-                : "детализация по дням недоступна",
+                ? `план ${formatMoney(kpi.budget)} · ${period === "today" ? "сегодня" : period === "7d" ? "7 дней" : "30 дней"}`
+                : period === "today"
+                  ? "сегодня"
+                  : period === "7d"
+                    ? "за 7 дней"
+                    : "за 30 дней",
           },
         ].map((item) => (
           <div

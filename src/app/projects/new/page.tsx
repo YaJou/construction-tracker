@@ -44,6 +44,7 @@ type FormState = {
   status: string;
   budget: string;
   manager: string;
+  foreman: string;
   object_type: string;
   area_sqm: string;
   note: string;
@@ -61,6 +62,7 @@ const emptyForm: FormState = {
   status: "planning",
   budget: "",
   manager: "",
+  foreman: "",
   object_type: "",
   area_sqm: "",
   note: "",
@@ -247,6 +249,7 @@ export default function NewProjectPage() {
           status: form.status,
           budget: form.budget ? parseFormattedNumber(form.budget) : 0,
           manager: form.manager.trim() || null,
+          foreman: form.foreman.trim() || null,
           object_type: form.object_type.trim() || null,
           area_sqm: form.area_sqm.trim() ? Number(form.area_sqm) : null,
           note: form.note.trim() || null,
@@ -297,6 +300,7 @@ export default function NewProjectPage() {
       status: "planning",
       budget: "6 500 000",
       manager: settings.managers[0]?.name || "Петров С.И.",
+      foreman: settings.managers[1]?.name || settings.managers[0]?.name || "Сидоров А.В.",
       object_type: settings.object_types[0]?.name || "Коттедж",
       area_sqm: "87",
       note: "Сложный участок, нужна проверка грунта",
@@ -663,13 +667,13 @@ export default function NewProjectPage() {
           <div className="mb-5">
             <h2 className="text-lg font-semibold text-green">Ответственные</h2>
             <p className="mt-1 text-sm text-muted">
-              Назначьте ответственного за объект. Поле «Прораб» появится, когда будет в модели данных.
+              Назначьте менеджера и прораба объекта. Их можно будет сменить позже.
             </p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label htmlFor="manager" className="block text-sm font-medium text-ink mb-1.5">
-                Ответственный
+                Ответственный (менеджер)
               </label>
               {settings.managers.length > 0 ? (
                 <Select
@@ -691,6 +695,34 @@ export default function NewProjectPage() {
                   value={form.manager}
                   onChange={(e) => setField("manager", e.target.value)}
                   placeholder="Иванов П.С."
+                  className={fieldClass()}
+                />
+              )}
+            </div>
+            <div>
+              <label htmlFor="foreman" className="block text-sm font-medium text-ink mb-1.5">
+                Прораб
+              </label>
+              {settings.managers.length > 0 ? (
+                <Select
+                  id="foreman"
+                  value={form.foreman}
+                  onChange={(e) => setField("foreman", e.target.value)}
+                  aria-label="Прораб"
+                >
+                  <option value="">Не выбран</option>
+                  {settings.managers.map((m) => (
+                    <option key={`f-${m.id}`} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <input
+                  id="foreman"
+                  value={form.foreman}
+                  onChange={(e) => setField("foreman", e.target.value)}
+                  placeholder="ФИО прораба"
                   className={fieldClass()}
                 />
               )}

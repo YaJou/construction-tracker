@@ -12,12 +12,39 @@ const DEFAULT_OBJECT_TYPES = [
   "Реконструкция",
 ];
 
+async function loadStatusOverrides(kind: "project" | "stage") {
+  const { data, error } = await supabase
+    .from("setting_status_labels")
+    .select("key, label")
+    .eq("kind", kind);
+  if (error) {
+    // Table may not exist until migration — fall back to constants
+    console.warn("setting_status_labels:", error.message);
+    return null;
+  }
+  return data ?? [];
+}
+
+function mergeStatusLabels(
+  defaults: Record<string, string>,
+  overrides: { key: string; label: string }[] | null
+) {
+  const map = { ...defaults };
+  for (const row of overrides ?? []) {
+    if (row.key && row.label) map[row.key] = row.label;
+  }
+  return Object.entries(map).map(([key, label]) => ({ key, label }));
+}
+
 async function loadSettings() {
-  const [managersRes, stagesRes, typesRes] = await Promise.all([
-    supabase.from("setting_managers").select("id, name").order("id"),
-    supabase.from("setting_default_stages").select("id, name, order_index").order("order_index"),
-    supabase.from("setting_object_types").select("id, name").order("id"),
-  ]);
+  const [managersRes, stagesRes, typesRes, projectStatusRes, stageStatusRes] =
+    await Promise.all([
+      supabase.from("setting_managers").select("id, name").order("id"),
+      supabase.from("setting_default_stages").select("id, name, order_index").order("order_index"),
+      supabase.from("setting_object_types").select("id, name").order("id"),
+      loadStatusOverrides("project"),
+      loadStatusOverrides("stage"),
+    ]);
 
   const managers = managersRes.data ?? [];
   const default_stages =
@@ -33,14 +60,8 @@ async function loadSettings() {
     default_stages,
     managers,
     object_types,
-    project_statuses: Object.entries(PROJECT_STATUS_LABELS).map(([key, label]) => ({
-      key,
-      label,
-    })),
-    stage_statuses: Object.entries(STAGE_STATUS_LABELS).map(([key, label]) => ({
-      key,
-      label,
-    })),
+    project_statuses: mergeStatusLabels(PROJECT_STATUS_LABELS, projectStatusRes),
+    stage_statuses: mergeStatusLabels(STAGE_STATUS_LABELS, stageStatusRes),
   };
 }
 
@@ -52,6 +73,22 @@ export async function GET() {
     console.error(e);
     return NextResponse.json({ error: "Ошибка загрузки настроек" }, { status: 500 });
   }
+}
+
+async function saveStatusLabels(
+  kind: "project" | "stage",
+  items: { key: string; label: string }[]
+) {
+  await supabase.from("setting_status_labels").delete().eq("kind", kind);
+  if (items.length === 0) return;
+  const { error } = await supabase.from("setting_status_labels").insert(
+    items.map((item) => ({
+      kind,
+      key: item.key,
+      label: item.label,
+    }))
+  );
+  if (error) throw error;
 }
 
 export async function PATCH(request: Request) {
@@ -97,6 +134,36 @@ export async function PATCH(request: Request) {
             }))
           );
         }
+      }
+    }
+
+    if (body.project_statuses !== undefined && Array.isArray(body.project_statuses)) {
+      try {
+        await saveStatusLabels("project", body.project_statuses);
+      } catch (e) {
+        console.error(e);
+        return NextResponse.json(
+          {
+            error:
+              "Не удалось сохранить статусы проекта. Выполните миграцию setting_status_labels.",
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (body.stage_statuses !== undefined && Array.isArray(body.stage_statuses)) {
+      try {
+        await saveStatusLabels("stage", body.stage_statuses);
+      } catch (e) {
+        console.error(e);
+        return NextResponse.json(
+          {
+            error:
+              "Не удалось сохранить статусы этапов. Выполните миграцию setting_status_labels.",
+          },
+          { status: 500 }
+        );
       }
     }
 
