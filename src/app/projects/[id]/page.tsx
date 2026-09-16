@@ -12,6 +12,7 @@ import {
   ProjectExpensesSection,
   ProjectActivitySection,
 } from "@/components/project/ProjectTabSections";
+import { ProjectSmetaSection } from "@/components/project/ProjectSmetaSection";
 import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { EXPENSE_CATEGORIES } from "@/lib/constants";
@@ -40,6 +41,7 @@ import {
   ImagePlus,
   DollarSign,
   History,
+  ClipboardList,
   CheckCircle2,
   Circle,
   Loader2,
@@ -58,7 +60,7 @@ import {
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
-type TabId = "overview" | "stages" | "photos" | "expenses" | "activity";
+type TabId = "overview" | "stages" | "photos" | "expenses" | "smeta" | "activity";
 
 type OverviewPhoto = {
   id: number;
@@ -713,6 +715,7 @@ export default function ProjectPage() {
     { id: "stages", label: "Этапы", icon: CheckCircle2 },
     { id: "photos", label: "Фото", icon: ImagePlus },
     { id: "expenses", label: "Расходы", icon: DollarSign },
+    { id: "smeta", label: "Смета", icon: ClipboardList },
     { id: "activity", label: "Журнал", icon: History },
   ];
 
@@ -1318,8 +1321,8 @@ export default function ProjectPage() {
         </div>
       )}
 
-      {/* Tabs — full-width grid on phone so nothing is clipped */}
-      <div className="grid grid-cols-5 gap-1 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
+      {/* Tabs — 2×3 on phone so all six fit */}
+      <div className="grid grid-cols-3 gap-1.5 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
         {tabs.map(({ id: tabId, label, icon: Icon }) => (
           <button
             key={tabId}
@@ -1883,6 +1886,8 @@ export default function ProjectPage() {
           refetch={refetch}
         />
       )}
+
+      {activeTab === "smeta" && <ProjectSmetaSection projectId={project.id} />}
 
       {activeTab === "activity" && <ProjectActivitySection projectId={project.id} />}
 
