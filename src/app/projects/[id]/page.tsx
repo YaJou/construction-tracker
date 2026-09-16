@@ -20,6 +20,7 @@ import {
   stageStatusLabel,
   useStatusLabels,
 } from "@/hooks/useStatusLabels";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   formatThousands,
   parseFormattedNumber,
@@ -542,13 +543,6 @@ export default function ProjectPage() {
     { id: "activity", label: "Журнал", icon: History },
   ];
 
-  const statusChipClass =
-    project.status === "completed"
-      ? "bg-green/10 text-green"
-      : project.status === "construction"
-        ? "bg-cream text-orange"
-        : "bg-surface text-muted";
-
   const renderStagesList = () => (
     <div className="space-y-4">
       <input
@@ -673,7 +667,12 @@ export default function ProjectPage() {
                       <div className="min-w-0 flex-1">
                         <p className={cn("font-medium", isDone ? "text-muted" : "text-ink")}>{stage.name}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-                          <span>{stageStatusLabel(stageLabels, stage.status)}</span>
+                          <StatusBadge
+                            kind="stage"
+                            status={stage.status}
+                            label={stageStatusLabel(stageLabels, stage.status)}
+                            className="h-7 min-w-0"
+                          />
                           <span className="tabular-nums">{stage.progress_percent}%</span>
                           {stage.start_date && (
                             <span>с {format(new Date(stage.start_date), "d MMM", { locale: ru })}</span>
@@ -925,9 +924,11 @@ export default function ProjectPage() {
               <span>{project.address || "Адрес не указан"}</span>
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-caption font-medium", statusChipClass)}>
-                {projectStatusLabel(projectLabels, project.status)}
-              </span>
+              <StatusBadge
+                kind="project"
+                status={project.status}
+                label={projectStatusLabel(projectLabels, project.status)}
+              />
               {project.manager && (
                 <span className="inline-flex items-center gap-1.5 text-sm text-muted">
                   <User className="w-4 h-4" />

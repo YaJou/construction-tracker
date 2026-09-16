@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
-import { DEFAULT_STAGES, PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS } from "@/lib/constants";
+import { DEFAULT_STAGES, PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, normalizeTemplateStageName } from "@/lib/constants";
 import { requireAuth, requireSettingsAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ async function loadSettings() {
       ? [...stagesRes.data]
           .map((s, i) => ({
             id: Number(s.id),
-            name: s.name,
+            name: normalizeTemplateStageName(s.name),
             order_index: typeof s.order_index === "number" ? s.order_index : i,
           }))
           .sort((a, b) => a.order_index - b.order_index)

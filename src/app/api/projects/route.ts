@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DEFAULT_STAGES } from "@/lib/constants";
+import { DEFAULT_STAGES, HANDOVER_STAGE_SUBSTEPS } from "@/lib/constants";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 import { addProjectMember, getAccessibleProjectIds } from "@/lib/auth/projectAccess";
@@ -22,6 +22,7 @@ export async function GET(request: Request) {
     const clientFilter = searchParams.get("client") ?? "";
     const cityFilter = searchParams.get("city") ?? "";
     const foremanFilter = searchParams.get("foreman") ?? "";
+    const objectTypeFilter = searchParams.get("object_type") ?? "";
     const list = searchParams.get("list") ?? "active"; // active | completed | archived
 
     // 1. Все проекты (с фильтром доступа для не-руководителей)
@@ -131,6 +132,10 @@ export async function GET(request: Request) {
       projects = projects.filter((p) => p.manager === managerFilter);
     if (clientFilter)
       projects = projects.filter((p) => p.client === clientFilter);
+    if (objectTypeFilter)
+      projects = projects.filter(
+        (p) => (p as { object_type?: string | null }).object_type === objectTypeFilter
+      );
     if (cityFilter)
       projects = projects.filter(
         (p) => getCityFromAddress(p.address) === cityFilter
@@ -399,11 +404,27 @@ export async function POST(request: Request) {
         created_at: now,
         updated_at: now,
       }));
-      const { error: stagesInsertError } = await supabase
+      const { data: insertedStages, error: stagesInsertError } = await supabase
         .from("stages")
-        .insert(rows);
+        .insert(rows)
+        .select("id, name");
       if (stagesInsertError) {
         console.error(stagesInsertError);
+      } else {
+        const handover = (insertedStages ?? []).find(
+          (s) => s.name === "Сдача и приёмка" || /^объект\s+заверш/i.test(s.name)
+        );
+        if (handover) {
+          const { error: subErr } = await supabase.from("stage_substeps").insert(
+            HANDOVER_STAGE_SUBSTEPS.map((name, j) => ({
+              stage_id: handover.id,
+              name,
+              completed: false,
+              order_index: j,
+            }))
+          );
+          if (subErr) console.error(subErr);
+        }
       }
     }
 

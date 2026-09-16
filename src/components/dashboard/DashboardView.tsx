@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   useProjects,
   type ProjectListItem,
 } from "@/hooks/useProjects";
 import { Select } from "@/components/ui/Select";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn } from "@/utils/cn";
 import { projectStatusLabel, useStatusLabels } from "@/hooks/useStatusLabels";
 import {
@@ -104,6 +105,8 @@ function statusBarClass(p: ProjectListItem) {
 
 export default function DashboardPage() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const objectTypeFromUrl = searchParams.get("object_type") || "";
   const { project: statusLabels } = useStatusLabels();
   const [listType, setListType] = useState<ListType>("active");
   const [search, setSearch] = useState("");
@@ -112,6 +115,7 @@ export default function DashboardPage() {
   const [clientFilter, setClientFilter] = useState("");
   const [cityFilter, setCityFilter] = useState("");
   const [foremanFilter, setForemanFilter] = useState("");
+  const [objectTypeFilter, setObjectTypeFilter] = useState(objectTypeFromUrl);
   const [sortBy, setSortBy] = useState("updated");
   const [period, setPeriod] = useState<Period>("today");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
@@ -139,8 +143,13 @@ export default function DashboardPage() {
     managerFilter,
     clientFilter,
     cityFilter,
-    foremanFilter
+    foremanFilter,
+    objectTypeFilter
   );
+
+  useEffect(() => {
+    setObjectTypeFilter(objectTypeFromUrl);
+  }, [objectTypeFromUrl]);
 
   const loadToday = useCallback(() => {
     fetch(`/api/activity/today?_t=${Date.now()}`, {
@@ -388,6 +397,7 @@ export default function DashboardPage() {
     foremanFilter && { key: "foreman", label: foremanFilter },
     clientFilter && { key: "client", label: clientFilter },
     cityFilter && { key: "city", label: cityFilter },
+    objectTypeFilter && { key: "object_type", label: objectTypeFilter },
     statusFilter && {
       key: "status",
       label: projectStatusLabel(statusLabels, statusFilter),
@@ -399,6 +409,7 @@ export default function DashboardPage() {
     if (key === "foreman") setForemanFilter("");
     if (key === "client") setClientFilter("");
     if (key === "city") setCityFilter("");
+    if (key === "object_type") setObjectTypeFilter("");
     if (key === "status") setStatusFilter("");
   };
 
@@ -844,7 +855,14 @@ export default function DashboardPage() {
                   </div>
                   <p className="text-caption text-muted truncate">{project.address}</p>
                 </div>
-                <p className="text-sm text-muted w-28">{projectStatusLabel(statusLabels, project.status)}</p>
+                <p className="text-sm text-muted w-28">
+                  <StatusBadge
+                    kind="project"
+                    status={project.status}
+                    label={projectStatusLabel(statusLabels, project.status)}
+                    className="h-7 min-w-0"
+                  />
+                </p>
                 <p className="text-sm font-medium text-ink w-16">{project.progress_percent}%</p>
                 <ChevronRight className="w-4 h-4 text-muted hidden sm:block" />
               </Link>
@@ -1119,9 +1137,12 @@ function ProjectCard({
           </div>
         </div>
 
-        <span className="inline-flex rounded-full bg-surface text-green px-2.5 py-1 text-caption font-medium">
-          {projectStatusLabel(statusLabels, project.status)}
-        </span>
+        <StatusBadge
+          kind="project"
+          status={project.status}
+          label={projectStatusLabel(statusLabels, project.status)}
+          className="h-8 min-w-0"
+        />
 
         <div>
           <div className="flex items-center justify-between text-caption text-muted mb-1.5">

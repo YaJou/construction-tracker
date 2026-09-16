@@ -4,21 +4,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn } from "@/utils/cn";
 import { useStatusLabels } from "@/hooks/useStatusLabels";
 import {
+  HANDOVER_STAGE_SUBSTEPS,
+  normalizeTemplateStageName,
+  objectWord,
+} from "@/lib/constants";
+import {
   ArrowLeft,
   Building2,
-  Check,
   ChevronDown,
   ChevronUp,
   GripVertical,
+  Home,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
   Search,
+  Store,
   Trash2,
   User,
+  Wrench,
   X,
 } from "lucide-react";
 
@@ -60,18 +69,15 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "statuses", label: "Статусы" },
 ];
 
-const PROJECT_BADGE: Record<string, string> = {
-  planning: "bg-[#E8EEEC] text-[#3D524A]",
-  construction: "bg-green/10 text-green",
-  paused: "bg-amber-100 text-amber-800",
-  completed: "bg-green text-white",
-};
-
-const STAGE_BADGE: Record<string, string> = {
-  not_started: "bg-[#E8EEEC] text-[#3D524A]",
-  in_progress: "bg-green/10 text-green",
-  completed: "bg-green text-white",
-};
+function objectTypeIcon(name: string) {
+  const n = name.toLowerCase();
+  if (/коттедж|дом|дач|частн/.test(n)) return Home;
+  if (/жк|жил|комплекс|многокварт/.test(n)) return Building2;
+  if (/таун/.test(n)) return Building2;
+  if (/коммерц|офис|торг/.test(n)) return Store;
+  if (/реконстр|ремонт/.test(n)) return Wrench;
+  return Building2;
+}
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -112,6 +118,7 @@ export default function SettingsPage() {
   const newStageRef = useRef<HTMLInputElement>(null);
   const dragIndexRef = useRef<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [stageMenuId, setStageMenuId] = useState<number | null>(null);
 
   // managers
   const [editingManagerId, setEditingManagerId] = useState<number | null>(null);
@@ -144,13 +151,24 @@ export default function SettingsPage() {
       const orderedStages = [...json.default_stages]
         .map((s, i) => ({
           id: Number(s.id),
-          name: s.name,
+          name: normalizeTemplateStageName(s.name),
           order_index: typeof s.order_index === "number" ? s.order_index : i,
         }))
         .sort((a, b) => a.order_index - b.order_index)
         .map((s, i) => ({ ...s, order_index: i }));
       stageListRef.current = orderedStages;
       setStageList(orderedStages);
+      // Template-only rename: old «Объект завершён» → «Сдача и приёмка»
+      const needsRename = json.default_stages.some(
+        (s) => normalizeTemplateStageName(s.name) !== s.name
+      );
+      if (needsRename) {
+        void fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ default_stages: orderedStages }),
+        }).catch(() => {});
+      }
       setProjectDrafts(
         Object.fromEntries(json.project_statuses.map((s) => [s.key, s.label]))
       );
@@ -183,6 +201,24 @@ export default function SettingsPage() {
       data.stage_statuses.some((s) => (stageDrafts[s.key] ?? s.label) !== s.label)
     );
   }, [data, projectDrafts, stageDrafts]);
+
+  const projectStatusesDirty = useMemo(() => {
+    if (!data) return false;
+    return data.project_statuses.some(
+      (s) => (projectDrafts[s.key] ?? s.label) !== s.label
+    );
+  }, [data, projectDrafts]);
+
+  const stageStatusesDirty = useMemo(() => {
+    if (!data) return false;
+    return data.stage_statuses.some((s) => (stageDrafts[s.key] ?? s.label) !== s.label);
+  }, [data, stageDrafts]);
+
+  useEffect(() => {
+    const close = () => setStageMenuId(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, []);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -448,6 +484,12 @@ export default function SettingsPage() {
                 используется при создании новых объектов. Этапы существующих объектов редактируются в
                 самих проектах.
               </p>
+              {stageList.some((s) => s.name === "Сдача и приёмка") && (
+                <p className="mt-2 text-caption text-muted">
+                  У «Сдача и приёмка» при создании нового объекта добавляется чек-лист:{" "}
+                  {HANDOVER_STAGE_SUBSTEPS.slice(0, 3).join(", ")}…
+                </p>
+              )}
             </div>
             <Button
               className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
@@ -625,56 +667,79 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         data-no-drag
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
-                        aria-label="Выше"
-                        onClick={() => moveStageAt(realIndex, -1)}
-                        disabled={realIndex <= 0}
-                      >
-                        <ChevronUp className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        data-no-drag
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
-                        aria-label="Ниже"
-                        onClick={() => moveStageAt(realIndex, 1)}
-                        disabled={realIndex >= stageList.length - 1}
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        data-no-drag
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
                         aria-label="Редактировать"
                         onClick={() => {
+                          setStageMenuId(null);
                           setEditingStageId(s.id);
                           setEditingStageName(s.name);
                         }}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button
-                        type="button"
-                        data-no-drag
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
-                        aria-label="Удалить"
-                        onClick={async () => {
-                          if (
-                            !window.confirm(
-                              `Удалить этап «${s.name}» из шаблона? На существующие объекты это не повлияет.`
-                            )
-                          )
-                            return;
-                          const next = stageList
-                            .filter((x) => Number(x.id) !== Number(s.id))
-                            .map((x, i) => ({ ...x, order_index: i }));
-                          applyStageOrder(next);
-                          await saveSection("default_stages", next);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="relative" data-no-drag>
+                        <button
+                          type="button"
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                          aria-label="Ещё действия"
+                          aria-expanded={stageMenuId === s.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setStageMenuId((prev) => (prev === s.id ? null : s.id));
+                          }}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                        {stageMenuId === s.id && (
+                          <div
+                            className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-line bg-white py-1 shadow-soft"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
+                              disabled={realIndex <= 0}
+                              onClick={() => {
+                                setStageMenuId(null);
+                                moveStageAt(realIndex, -1);
+                              }}
+                            >
+                              <ChevronUp className="h-4 w-4 text-muted" /> Выше
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
+                              disabled={realIndex >= stageList.length - 1}
+                              onClick={() => {
+                                setStageMenuId(null);
+                                moveStageAt(realIndex, 1);
+                              }}
+                            >
+                              <ChevronDown className="h-4 w-4 text-muted" /> Ниже
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                              onClick={async () => {
+                                setStageMenuId(null);
+                                if (
+                                  !window.confirm(
+                                    `Удалить этап «${s.name}» из шаблона? На существующие объекты это не повлияет.`
+                                  )
+                                )
+                                  return;
+                                const next = stageList
+                                  .filter((x) => Number(x.id) !== Number(s.id))
+                                  .map((x, i) => ({ ...x, order_index: i }));
+                                applyStageOrder(next);
+                                await saveSection("default_stages", next);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" /> Удалить
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
                 </li>
@@ -1019,10 +1084,11 @@ export default function SettingsPage() {
           <ul className="mt-3 divide-y divide-line">
             {types.map((t) => {
               const used = data.usage?.object_types?.[t.name] ?? 0;
+              const Icon = objectTypeIcon(t.name);
               return (
                 <li key={t.id} className="flex min-h-[56px] items-center gap-3 py-2 hover:bg-surface/80">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-surface text-green">
-                    <Building2 className="h-4 w-4" />
+                    <Icon className="h-4 w-4" />
                   </span>
                   {editingTypeId === t.id ? (
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -1072,7 +1138,12 @@ export default function SettingsPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[15px] font-medium text-ink">{t.name}</p>
                         {used > 0 && (
-                          <p className="text-caption text-muted">Используется в объектах: {used}</p>
+                          <Link
+                            href={`/dashboard?object_type=${encodeURIComponent(t.name)}`}
+                            className="text-caption text-orange hover:text-orange/80"
+                          >
+                            {used} {objectWord(used)}
+                          </Link>
                         )}
                       </div>
                       <button
@@ -1093,7 +1164,7 @@ export default function SettingsPage() {
                         onClick={async () => {
                           if (used > 0) {
                             window.alert(
-                              `Тип «${t.name}» уже указан у ${used} объектов. Удаление из справочника не изменит карточки — там останется старое значение.`
+                              `Тип «${t.name}» уже указан у ${used} ${objectWord(used)}. Удаление из справочника не изменит карточки — там останется старое значение.`
                             );
                           }
                           if (!window.confirm(`Удалить тип «${t.name}»?`)) return;
@@ -1130,76 +1201,32 @@ export default function SettingsPage() {
 
       {/* STATUSES */}
       {tab === "statuses" && (
-        <div className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
-              <h2 className="text-lg font-semibold text-ink">Статусы объектов</h2>
-              <p className="mt-1 text-sm text-muted">Подписи для карточек и фильтров</p>
-              <ul className="mt-4 space-y-3">
-                {data.project_statuses.map((s) => {
-                  const label = projectDrafts[s.key] ?? s.label;
-                  return (
-                    <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        value={label}
-                        onChange={(e) =>
-                          setProjectDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
-                        }
-                        className="flex-1"
-                        aria-label={`Подпись статуса объекта`}
-                      />
-                      <span
-                        className={cn(
-                          "inline-flex h-9 min-w-[120px] items-center justify-center gap-1 rounded-full px-3 text-caption font-medium",
-                          PROJECT_BADGE[s.key] || "bg-surface text-ink"
-                        )}
-                      >
-                        {s.key === "completed" && <Check className="h-3.5 w-3.5" />}
-                        {label || "—"}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-
-            <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
-              <h2 className="text-lg font-semibold text-ink">Статусы этапов</h2>
-              <p className="mt-1 text-sm text-muted">Подписи в списке этапов строительства</p>
-              <ul className="mt-4 space-y-3">
-                {data.stage_statuses.map((s) => {
-                  const label = stageDrafts[s.key] ?? s.label;
-                  return (
-                    <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        value={label}
-                        onChange={(e) =>
-                          setStageDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
-                        }
-                        className="flex-1"
-                        aria-label={`Подпись статуса этапа`}
-                      />
-                      <span
-                        className={cn(
-                          "inline-flex h-9 min-w-[120px] items-center justify-center gap-1 rounded-full px-3 text-caption font-medium",
-                          STAGE_BADGE[s.key] || "bg-surface text-ink"
-                        )}
-                      >
-                        {s.key === "completed" && <Check className="h-3.5 w-3.5" />}
-                        {label || "—"}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          </div>
-
-          {statusesDirty && (
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+            <h2 className="text-lg font-semibold text-ink">Статусы объектов</h2>
+            <p className="mt-1 text-sm text-muted">Подписи для карточек и фильтров</p>
+            <ul className="mt-4 space-y-3">
+              {data.project_statuses.map((s) => {
+                const label = projectDrafts[s.key] ?? s.label;
+                return (
+                  <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      value={label}
+                      onChange={(e) =>
+                        setProjectDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+                      }
+                      className="flex-1"
+                      aria-label="Подпись статуса объекта"
+                    />
+                    <StatusBadge kind="project" status={s.key} label={label} />
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
               <Button
-                disabled={saving}
-                className="bg-orange hover:bg-orange/90 text-white border-0"
+                disabled={saving || !projectStatusesDirty}
+                className="bg-orange hover:bg-orange/90 text-white border-0 disabled:opacity-40"
                 onClick={async () => {
                   for (const s of data.project_statuses) {
                     if (!normalizeName(projectDrafts[s.key] ?? "")) {
@@ -1207,49 +1234,21 @@ export default function SettingsPage() {
                       return;
                     }
                   }
-                  for (const s of data.stage_statuses) {
-                    if (!normalizeName(stageDrafts[s.key] ?? "")) {
-                      setError("Подпись статуса этапа не может быть пустой");
-                      return;
-                    }
-                  }
-                  setSaving(true);
-                  setError("");
-                  setOkMessage("");
-                  try {
-                    const res = await fetch("/api/settings", {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        project_statuses: data.project_statuses.map((s) => ({
-                          key: s.key,
-                          label: normalizeName(projectDrafts[s.key] ?? s.label),
-                        })),
-                        stage_statuses: data.stage_statuses.map((s) => ({
-                          key: s.key,
-                          label: normalizeName(stageDrafts[s.key] ?? s.label),
-                        })),
-                      }),
+                  const ok = await saveSection(
+                    "project_statuses",
+                    data.project_statuses.map((s) => ({
+                      key: s.key,
+                      label: normalizeName(projectDrafts[s.key] ?? s.label),
+                    }))
+                  );
+                  if (ok) {
+                    setProjectDrafts((prev) => {
+                      const next = { ...prev };
+                      for (const s of data.project_statuses) {
+                        next[s.key] = normalizeName(projectDrafts[s.key] ?? s.label);
+                      }
+                      return next;
                     });
-                    const updated = await res.json();
-                    if (!res.ok || !isSettingsData(updated)) {
-                      setError(updated?.error || "Не удалось сохранить статусы");
-                      return;
-                    }
-                    setData(updated);
-                    setProjectDrafts(
-                      Object.fromEntries(updated.project_statuses.map((s) => [s.key, s.label]))
-                    );
-                    setStageDrafts(
-                      Object.fromEntries(updated.stage_statuses.map((s) => [s.key, s.label]))
-                    );
-                    await refreshLabels();
-                    setOkMessage("Сохранено");
-                    window.setTimeout(() => setOkMessage(""), 2500);
-                  } catch {
-                    setError("Ошибка сети при сохранении");
-                  } finally {
-                    setSaving(false);
                   }
                 }}
               >
@@ -1258,11 +1257,67 @@ export default function SettingsPage() {
               </Button>
               <Button
                 variant="ghost"
-                disabled={saving}
+                disabled={saving || !projectStatusesDirty}
                 onClick={() => {
                   setProjectDrafts(
                     Object.fromEntries(data.project_statuses.map((s) => [s.key, s.label]))
                   );
+                  setError("");
+                }}
+              >
+                <X className="mr-1 h-4 w-4" /> Отменить
+              </Button>
+            </div>
+          </section>
+
+          <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+            <h2 className="text-lg font-semibold text-ink">Статусы этапов</h2>
+            <p className="mt-1 text-sm text-muted">Подписи в списке этапов строительства</p>
+            <ul className="mt-4 space-y-3">
+              {data.stage_statuses.map((s) => {
+                const label = stageDrafts[s.key] ?? s.label;
+                return (
+                  <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      value={label}
+                      onChange={(e) =>
+                        setStageDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+                      }
+                      className="flex-1"
+                      aria-label="Подпись статуса этапа"
+                    />
+                    <StatusBadge kind="stage" status={s.key} label={label} />
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+              <Button
+                disabled={saving || !stageStatusesDirty}
+                className="bg-orange hover:bg-orange/90 text-white border-0 disabled:opacity-40"
+                onClick={async () => {
+                  for (const s of data.stage_statuses) {
+                    if (!normalizeName(stageDrafts[s.key] ?? "")) {
+                      setError("Подпись статуса этапа не может быть пустой");
+                      return;
+                    }
+                  }
+                  await saveSection(
+                    "stage_statuses",
+                    data.stage_statuses.map((s) => ({
+                      key: s.key,
+                      label: normalizeName(stageDrafts[s.key] ?? s.label),
+                    }))
+                  );
+                }}
+              >
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Сохранить изменения
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={saving || !stageStatusesDirty}
+                onClick={() => {
                   setStageDrafts(
                     Object.fromEntries(data.stage_statuses.map((s) => [s.key, s.label]))
                   );
@@ -1272,7 +1327,7 @@ export default function SettingsPage() {
                 <X className="mr-1 h-4 w-4" /> Отменить
               </Button>
             </div>
-          )}
+          </section>
         </div>
       )}
     </div>

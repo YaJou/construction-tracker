@@ -40,7 +40,8 @@ export function useProjects(
   manager?: string,
   client?: string,
   city?: string,
-  foreman?: string
+  foreman?: string,
+  objectType?: string
 ) {
   const [data, setData] = useState<ProjectListItem[]>([]);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
@@ -66,6 +67,7 @@ export function useProjects(
       if (client) params.set("client", client);
       if (city) params.set("city", city);
       if (foreman) params.set("foreman", foreman);
+      if (objectType) params.set("object_type", objectType);
       // bust any intermediate HTTP/CDN cache
       params.set("_t", String(Date.now()));
       const res = await fetch(`/api/projects?${params}`, {
@@ -83,7 +85,7 @@ export function useProjects(
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [listType, statusFilter, search, manager, client, city, foreman]);
+  }, [listType, statusFilter, search, manager, client, city, foreman, objectType]);
 
   useEffect(() => {
     fetchProjects();
