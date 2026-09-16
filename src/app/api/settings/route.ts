@@ -169,17 +169,50 @@ export async function PATCH(request: Request) {
     }
 
     if (body.default_stages !== undefined && Array.isArray(body.default_stages)) {
-      await supabase.from("setting_default_stages").delete().neq("id", 0);
-      if (body.default_stages.length > 0) {
-        await supabase.from("setting_default_stages").insert(
-          body.default_stages.map(
-            (s: { id?: number; name: string; order_index?: number }, i: number) => ({
-              id: typeof s.id === "number" ? s.id : i + 1,
-              name: s.name,
-              order_index: s.order_index ?? i,
-            })
-          )
+      const rows = body.default_stages.map(
+        (s: { id?: number; name: string; order_index?: number }, i: number) => ({
+          id: typeof s.id === "number" ? s.id : i + 1,
+          name: s.name,
+          order_index: s.order_index ?? i,
+        })
+      );
+
+      const { data: existing, error: existingError } = await supabase
+        .from("setting_default_stages")
+        .select("id");
+      if (existingError) {
+        return NextResponse.json(
+          { error: `Не удалось прочитать этапы: ${existingError.message}` },
+          { status: 500 }
         );
+      }
+
+      const incomingIds = new Set(rows.map((r) => r.id));
+      const toDelete = (existing ?? []).map((r) => r.id).filter((id) => !incomingIds.has(id));
+
+      if (toDelete.length > 0) {
+        const { error: delError } = await supabase
+          .from("setting_default_stages")
+          .delete()
+          .in("id", toDelete);
+        if (delError) {
+          return NextResponse.json(
+            { error: `Не удалось удалить этапы: ${delError.message}` },
+            { status: 500 }
+          );
+        }
+      }
+
+      if (rows.length > 0) {
+        const { error: upsertError } = await supabase
+          .from("setting_default_stages")
+          .upsert(rows, { onConflict: "id" });
+        if (upsertError) {
+          return NextResponse.json(
+            { error: `Не удалось сохранить этапы: ${upsertError.message}` },
+            { status: 500 }
+          );
+        }
       }
     }
 

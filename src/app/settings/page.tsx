@@ -261,12 +261,17 @@ export default function SettingsPage() {
   };
 
   const persistStagesOrder = async (ordered: SettingDefaultStage[]) => {
+    if (!data) return;
     const next = ordered.map((s, i) => ({ ...s, order_index: i }));
-    await saveSection("default_stages", next);
+    const snapshot = data;
+    // Optimistic UI — стрелки сразу двигают список
+    setData({ ...data, default_stages: next });
+    const ok = await saveSection("default_stages", next);
+    if (!ok) setData(snapshot);
   };
 
   const moveStage = async (id: number, dir: -1 | 1) => {
-    if (!data) return;
+    if (!data || saving) return;
     const ordered = [...data.default_stages].sort((a, b) => a.order_index - b.order_index);
     const idx = ordered.findIndex((s) => s.id === id);
     const j = idx + dir;
@@ -277,7 +282,7 @@ export default function SettingsPage() {
   };
 
   const onDropStage = async (targetId: number) => {
-    if (!data || dragId == null || dragId === targetId) {
+    if (!data || dragId == null || dragId === targetId || saving) {
       setDragId(null);
       return;
     }
@@ -495,10 +500,14 @@ export default function SettingsPage() {
               return (
                 <li
                   key={s.id}
-                  draggable={editingStageId !== s.id}
-                  onDragStart={() => setDragId(s.id)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => onDropStage(s.id)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    onDropStage(s.id);
+                  }}
                   className={cn(
                     "flex min-h-[60px] items-center gap-2 py-2 transition-colors",
                     "hover:bg-surface/80",
@@ -507,6 +516,13 @@ export default function SettingsPage() {
                 >
                   <button
                     type="button"
+                    draggable={editingStageId !== s.id}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(s.id));
+                      setDragId(s.id);
+                    }}
+                    onDragEnd={() => setDragId(null)}
                     className="inline-flex h-11 w-9 cursor-grab items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
                     aria-label="Переместить"
                     title="Перетащите"
@@ -566,18 +582,28 @@ export default function SettingsPage() {
                       </span>
                       <button
                         type="button"
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
                         aria-label="Выше"
-                        onClick={() => moveStage(s.id, -1)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void moveStage(s.id, -1);
+                        }}
                         disabled={saving || realIndex === 0}
                       >
                         <ChevronUp className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink disabled:opacity-40"
                         aria-label="Ниже"
-                        onClick={() => moveStage(s.id, 1)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void moveStage(s.id, 1);
+                        }}
                         disabled={
                           saving ||
                           realIndex === data.default_stages.length - 1
@@ -589,6 +615,7 @@ export default function SettingsPage() {
                         type="button"
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
                         aria-label="Редактировать"
+                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={() => {
                           setEditingStageId(s.id);
                           setEditingStageName(s.name);
@@ -600,6 +627,7 @@ export default function SettingsPage() {
                         type="button"
                         className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
                         aria-label="Удалить"
+                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={async () => {
                           if (
                             !window.confirm(
