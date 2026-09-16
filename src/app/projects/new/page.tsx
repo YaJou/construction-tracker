@@ -11,6 +11,7 @@ import {
   formatPhoneDisplay,
   phoneToStore,
 } from "@/lib/format";
+import { Select } from "@/components/ui/Select";
 import { cn } from "@/utils/cn";
 import {
   ArrowLeft,
@@ -500,11 +501,11 @@ export default function NewProjectPage() {
               <label htmlFor="object_type" className="block text-sm font-medium text-ink mb-1.5">
                 Тип объекта
               </label>
-              <select
+              <Select
                 id="object_type"
                 value={form.object_type}
                 onChange={(e) => setField("object_type", e.target.value)}
-                className={fieldClass()}
+                aria-label="Тип объекта"
               >
                 <option value="">Не выбран</option>
                 {settings.object_types.map((o) => (
@@ -512,7 +513,7 @@ export default function NewProjectPage() {
                     {o.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="md:col-span-2">
@@ -624,18 +625,18 @@ export default function NewProjectPage() {
               <label htmlFor="status" className="block text-sm font-medium text-ink mb-1.5">
                 Статус
               </label>
-              <select
+              <Select
                 id="status"
                 value={form.status}
                 onChange={(e) => setField("status", e.target.value)}
-                className={fieldClass()}
+                aria-label="Статус"
               >
                 {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div>
               <label htmlFor="budget" className="block text-sm font-medium text-ink mb-1.5">
@@ -671,11 +672,11 @@ export default function NewProjectPage() {
                 Ответственный
               </label>
               {settings.managers.length > 0 ? (
-                <select
+                <Select
                   id="manager"
                   value={form.manager}
                   onChange={(e) => setField("manager", e.target.value)}
-                  className={fieldClass()}
+                  aria-label="Ответственный"
                 >
                   <option value="">Не выбран</option>
                   {settings.managers.map((m) => (
@@ -683,7 +684,7 @@ export default function NewProjectPage() {
                       {m.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               ) : (
                 <input
                   id="manager"

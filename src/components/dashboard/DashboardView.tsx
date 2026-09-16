@@ -8,6 +8,7 @@ import {
   type ProjectListItem,
 } from "@/hooks/useProjects";
 import { PROJECT_STATUS_LABELS } from "@/lib/constants";
+import { Select } from "@/components/ui/Select";
 import { cn } from "@/utils/cn";
 import {
   Plus,
@@ -136,10 +137,6 @@ function statusBarClass(p: ProjectListItem) {
   if (p.status === "completed") return "bg-[#9AA6A1]";
   if (needsAttention(p)) return "bg-orange";
   return "bg-green";
-}
-
-function selectClass() {
-  return "h-[42px] rounded-[10px] border border-line bg-white px-3 text-sm text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-orange/30";
 }
 
 export default function DashboardPage() {
@@ -430,10 +427,9 @@ export default function DashboardPage() {
 
   const filterPanel = (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-      <select
+      <Select
         value={managerFilter}
         onChange={(e) => setManagerFilter(e.target.value)}
-        className={selectClass()}
         aria-label="Ответственный"
       >
         <option value="">Ответственный</option>
@@ -442,11 +438,10 @@ export default function DashboardPage() {
             {m}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={foremanFilter}
         onChange={(e) => setForemanFilter(e.target.value)}
-        className={selectClass()}
         aria-label="Прораб"
       >
         <option value="">Прораб</option>
@@ -455,11 +450,10 @@ export default function DashboardPage() {
             {r}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={clientFilter}
         onChange={(e) => setClientFilter(e.target.value)}
-        className={selectClass()}
         aria-label="Клиент"
       >
         <option value="">Клиент</option>
@@ -468,11 +462,10 @@ export default function DashboardPage() {
             {c}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={cityFilter}
         onChange={(e) => setCityFilter(e.target.value)}
-        className={selectClass()}
         aria-label="Город"
       >
         <option value="">Город</option>
@@ -481,11 +474,10 @@ export default function DashboardPage() {
             {c}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={statusFilter}
         onChange={(e) => setStatusFilter(e.target.value)}
-        className={selectClass()}
         aria-label="Статус"
       >
         <option value="">Все статусы</option>
@@ -494,18 +486,18 @@ export default function DashboardPage() {
             {label}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={sortBy}
         onChange={(e) => setSortBy(e.target.value)}
-        className={cn(selectClass(), "sm:col-span-2 lg:col-span-1")}
+        className="sm:col-span-2 lg:col-span-1"
         aria-label="Сортировка"
       >
         <option value="updated">По обновлению</option>
         <option value="deadline">По сроку</option>
         <option value="progress">По прогрессу</option>
         <option value="activity">По активности</option>
-      </select>
+      </Select>
     </div>
   );
 

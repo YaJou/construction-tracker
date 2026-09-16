@@ -730,7 +730,7 @@ export default function ProjectPage() {
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
-                          <select
+                          <Select
                             value={stage.status}
                             onChange={(e) =>
                               updateStage(stage.id, {
@@ -743,14 +743,15 @@ export default function ProjectPage() {
                                   : {}),
                               })
                             }
-                            className="rounded-[10px] border border-line px-3 py-2 text-sm min-w-[140px] bg-white"
+                            className="min-w-[140px] w-auto"
+                            aria-label={`Статус этапа ${stage.name}`}
                           >
                             {Object.entries(STAGE_STATUS_LABELS).map(([val, label]) => (
                               <option key={val} value={val}>
                                 {label}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                           <input
                             type="number"
                             min={0}

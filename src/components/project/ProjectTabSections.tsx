@@ -455,27 +455,29 @@ export function ProjectExpensesSection({
                 onChange={(e) => setExpenseSearch(e.target.value)}
                 className="w-full sm:w-64 max-w-full"
               />
-              <select
+              <Select
                 value={expenseFilterCategory}
                 onChange={(e) => setExpenseFilterCategory(e.target.value)}
-                className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink min-w-[140px] focus:outline-none focus:ring-2 focus:ring-ink/20"
+                className="min-w-[140px] w-full sm:w-auto"
+                aria-label="Категория расхода"
               >
                 <option value="">Все категории</option>
                 {EXPENSE_CATEGORIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
-              </select>
-              <select
+              </Select>
+              <Select
                 value={expenseSort}
                 onChange={(e) => setExpenseSort(e.target.value as typeof expenseSort)}
-                className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink min-w-[160px] focus:outline-none focus:ring-2 focus:ring-ink/20"
+                className="min-w-[160px] w-full sm:w-auto"
+                aria-label="Сортировка расходов"
               >
                 <option value="date_desc">Дата: сначала новые</option>
                 <option value="date_asc">Дата: сначала старые</option>
                 <option value="amount_desc">Сумма: по убыванию</option>
                 <option value="amount_asc">Сумма: по возрастанию</option>
                 <option value="category">По категории</option>
-              </select>
+              </Select>
             </div>
             <ul className="divide-y divide-border">
               {filteredAndSortedExpenses.map((exp, i) => (
