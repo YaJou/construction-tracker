@@ -712,7 +712,8 @@ export default function ProjectPage() {
               <li
                 key={stage.id}
                 className={cn(
-                  "rounded-[18px] border bg-white overflow-hidden transition-colors",
+                  "rounded-[18px] border bg-white transition-colors",
+                  expanded ? "overflow-visible" : "overflow-hidden",
                   isDone ? "border-line opacity-80" : "border-line shadow-[0_8px_24px_rgba(23,63,52,0.04)]",
                   stage.status === "in_progress" && "border-orange/25"
                 )}

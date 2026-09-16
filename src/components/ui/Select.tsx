@@ -6,12 +6,14 @@ import {
   isValidElement,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
 type Option = {
@@ -61,16 +63,23 @@ export function Select({
   const listboxId = `${reactId}-listbox`;
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const [internalValue, setInternalValue] = useState(
     String(value ?? defaultValue ?? options[0]?.value ?? "")
   );
   const [activeIndex, setActiveIndex] = useState(0);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const [mounted, setMounted] = useState(false);
 
   const isControlled = value !== undefined;
   const currentValue = isControlled ? String(value) : internalValue;
   const selected = options.find((o) => o.value === currentValue) ?? options[0];
   const selectedLabel = selected?.label ?? "";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -81,10 +90,46 @@ export function Select({
     setActiveIndex(idx);
   }, [open, currentValue, options]);
 
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+
+    const place = () => {
+      const rect = buttonRef.current!.getBoundingClientRect();
+      const maxH = 240;
+      const gap = 6;
+      const spaceBelow = window.innerHeight - rect.bottom - gap;
+      const spaceAbove = rect.top - gap;
+      const openUp = spaceBelow < Math.min(maxH, 160) && spaceAbove > spaceBelow;
+      const height = Math.min(maxH, openUp ? spaceAbove : spaceBelow);
+      const width = Math.max(rect.width, 160);
+
+      setMenuStyle({
+        position: "fixed",
+        left: Math.min(rect.left, window.innerWidth - width - 8),
+        width,
+        maxHeight: Math.max(120, height),
+        zIndex: 80,
+        ...(openUp
+          ? { bottom: window.innerHeight - rect.top + gap }
+          : { top: rect.bottom + gap }),
+      });
+    };
+
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || listRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -121,6 +166,56 @@ export function Select({
       }
     }
   };
+
+  const listbox =
+    open && mounted
+      ? createPortal(
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={ariaLabel}
+            tabIndex={-1}
+            style={menuStyle}
+            className={cn(
+              "overflow-auto rounded-[12px] border border-line bg-white py-1.5",
+              "shadow-[0_12px_32px_rgba(23,63,52,0.12)]"
+            )}
+          >
+            {options.map((opt, index) => {
+              const isSelected = opt.value === currentValue;
+              const isActive = index === activeIndex;
+              return (
+                <li
+                  key={`${opt.value}-${index}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  aria-disabled={opt.disabled || undefined}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (opt.disabled) return;
+                    commit(opt.value);
+                  }}
+                  className={cn(
+                    "mx-1.5 flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-[8px] px-3 text-sm transition-colors duration-fast motion-reduce:transition-none",
+                    opt.disabled && "cursor-not-allowed opacity-40",
+                    isSelected && "bg-green text-white",
+                    !isSelected && isActive && "bg-surface text-ink",
+                    !isSelected && !isActive && "text-ink hover:bg-surface"
+                  )}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {isSelected ? (
+                    <Check className="h-4 w-4 shrink-0 text-orange" aria-hidden />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>,
+          document.body
+        )
+      : null;
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
@@ -178,50 +273,7 @@ export function Select({
           aria-hidden
         />
       </button>
-
-      {open && (
-        <ul
-          id={listboxId}
-          role="listbox"
-          aria-label={ariaLabel}
-          tabIndex={-1}
-          className={cn(
-            "absolute left-0 right-0 z-50 mt-1.5 max-h-60 overflow-auto rounded-[12px] border border-line bg-white py-1.5",
-            "shadow-[0_12px_32px_rgba(23,63,52,0.12)]"
-          )}
-        >
-          {options.map((opt, index) => {
-            const isSelected = opt.value === currentValue;
-            const isActive = index === activeIndex;
-            return (
-              <li
-                key={`${opt.value}-${index}`}
-                role="option"
-                aria-selected={isSelected}
-                aria-disabled={opt.disabled || undefined}
-                onMouseEnter={() => setActiveIndex(index)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  if (opt.disabled) return;
-                  commit(opt.value);
-                }}
-                className={cn(
-                  "mx-1.5 flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-[8px] px-3 text-sm transition-colors duration-fast motion-reduce:transition-none",
-                  opt.disabled && "cursor-not-allowed opacity-40",
-                  isSelected && "bg-green text-white",
-                  !isSelected && isActive && "bg-surface text-ink",
-                  !isSelected && !isActive && "text-ink hover:bg-surface"
-                )}
-              >
-                <span className="truncate">{opt.label}</span>
-                {isSelected ? (
-                  <Check className="h-4 w-4 shrink-0 text-orange" aria-hidden />
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {listbox}
     </div>
   );
 }
