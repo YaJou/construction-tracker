@@ -80,7 +80,8 @@ create table if not exists public.photo_assets (
 -- Basic RLS scaffolding (enable after Auth is live; currently anon key still used by app)
 alter table public.profiles enable row level security;
 alter table public.project_members enable row level security;
-alter table public.setting_status_labels enable row level security;
+-- Keep status labels writable by anon until API auth is enforced
+alter table public.setting_status_labels disable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
@@ -93,18 +94,6 @@ drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own"
   on public.profiles for update
   using (auth.uid() = id);
-
-drop policy if exists "status_labels_read" on public.setting_status_labels;
-create policy "status_labels_read"
-  on public.setting_status_labels for select
-  using (true);
-
-drop policy if exists "status_labels_write_owner" on public.setting_status_labels;
-create policy "status_labels_write_owner"
-  on public.setting_status_labels for all
-  using (exists (
-    select 1 from public.profiles p where p.id = auth.uid() and p.role = 'owner'
-  ));
 
 comment on column public.projects.foreman is 'Project-level foreman display name (temporary until user_id FKs)';
 comment on table public.profiles is 'App roles: owner=руководитель, manager, foreman=прораб, client';

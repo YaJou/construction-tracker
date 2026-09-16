@@ -79,8 +79,18 @@ async function saveStatusLabels(
   kind: "project" | "stage",
   items: { key: string; label: string }[]
 ) {
-  await supabase.from("setting_status_labels").delete().eq("kind", kind);
+  const { error: delError } = await supabase
+    .from("setting_status_labels")
+    .delete()
+    .eq("kind", kind);
+
+  if (delError) {
+    // Table missing or RLS blocked
+    throw new Error(delError.message);
+  }
+
   if (items.length === 0) return;
+
   const { error } = await supabase.from("setting_status_labels").insert(
     items.map((item) => ({
       kind,
@@ -88,7 +98,7 @@ async function saveStatusLabels(
       label: item.label,
     }))
   );
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 
 export async function PATCH(request: Request) {
@@ -142,10 +152,10 @@ export async function PATCH(request: Request) {
         await saveStatusLabels("project", body.project_statuses);
       } catch (e) {
         console.error(e);
+        const msg = e instanceof Error ? e.message : String(e);
         return NextResponse.json(
           {
-            error:
-              "Не удалось сохранить статусы проекта. Выполните миграцию setting_status_labels.",
+            error: `Не удалось сохранить статусы проекта: ${msg}. В Supabase SQL Editor выполните: alter table public.setting_status_labels disable row level security; (и убедитесь, что таблица создана миграцией).`,
           },
           { status: 500 }
         );
@@ -157,10 +167,10 @@ export async function PATCH(request: Request) {
         await saveStatusLabels("stage", body.stage_statuses);
       } catch (e) {
         console.error(e);
+        const msg = e instanceof Error ? e.message : String(e);
         return NextResponse.json(
           {
-            error:
-              "Не удалось сохранить статусы этапов. Выполните миграцию setting_status_labels.",
+            error: `Не удалось сохранить статусы этапов: ${msg}. В Supabase SQL Editor выполните: alter table public.setting_status_labels disable row level security;`,
           },
           { status: 500 }
         );
