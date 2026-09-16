@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -31,61 +32,87 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-async function fetchProfile(userId: string): Promise<Profile | null> {
-  const supabase = createBrowserSupabase();
-  const { data } = await supabase
-    .from("profiles")
-    .select("id, full_name, role, is_active")
-    .eq("id", userId)
-    .maybeSingle();
-  if (!data) return null;
-  return {
-    id: data.id,
-    full_name: data.full_name,
-    role: (data.role as AppRole) || "manager",
-    is_active: data.is_active !== false,
-  };
+async function fetchProfileViaApi(): Promise<Profile | null> {
+  try {
+    const res = await fetch("/api/auth/me", { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json?.profile?.id) return null;
+    return {
+      id: json.profile.id,
+      full_name: json.profile.full_name ?? null,
+      role: (json.profile.role as AppRole) || "manager",
+      is_active: json.profile.is_active !== false,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const refreshing = useRef(false);
 
   const refresh = useCallback(async () => {
-    const supabase = createBrowserSupabase();
-    const {
-      data: { user: u },
-    } = await supabase.auth.getUser();
-    setUser(u);
-    if (u) {
-      const p = await fetchProfile(u.id);
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      const supabase = createBrowserSupabase();
+      const {
+        data: { user: u },
+      } = await supabase.auth.getUser();
+      setUser(u);
+
+      if (!u) {
+        setProfile(null);
+        return;
+      }
+
+      // Always load role from API (server reads DB correctly); never invent "manager"
+      const p = await fetchProfileViaApi();
       if (p) {
         setProfile(p);
       } else {
-        setProfile({
-          id: u.id,
-          full_name: (u.user_metadata?.full_name as string) || null,
-          role: "manager",
-          is_active: true,
-        });
+        // Keep previous profile if temporary fetch failed while logged in
+        setProfile((prev) =>
+          prev && prev.id === u.id
+            ? prev
+            : {
+                id: u.id,
+                full_name: (u.user_metadata?.full_name as string) || null,
+                role: "manager",
+                is_active: true,
+              }
+        );
       }
-    } else {
-      setProfile(null);
+    } finally {
+      refreshing.current = false;
     }
   }, []);
 
   useEffect(() => {
     const supabase = createBrowserSupabase();
-    refresh().finally(() => setLoading(false));
+    let mounted = true;
+
+    (async () => {
+      await refresh();
+      if (mounted) setLoading(false);
+    })();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
+    } = supabase.auth.onAuthStateChange((event) => {
+      // Skip noisy token refresh storms; still refresh on sign in/out
+      if (event === "TOKEN_REFRESHED") return;
       refresh();
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [refresh]);
 
   const signOut = useCallback(async () => {
@@ -103,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       displayName: displayName(profile, user?.email),
-      roleLabel: role ? ROLE_LABELS[role] : "Гость",
+      roleLabel: loading ? "…" : role ? ROLE_LABELS[role] : "Гость",
       role,
       refresh,
       signOut,

@@ -7,11 +7,23 @@ import { canManageSettings, canWrite } from "@/lib/auth/roles";
 export type AuthContext = {
   user: { id: string; email?: string };
   profile: Profile;
-  /** User-scoped Supabase client (cookie session) */
   supabase: Awaited<ReturnType<typeof createServerSupabase>>;
-  /** Legacy anon client for existing queries until fully migrated */
   db: typeof anonSupabase;
 };
+
+function mapProfile(row: {
+  id: string;
+  full_name: string | null;
+  role: string;
+  is_active: boolean | null;
+}): Profile {
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    role: (row.role as AppRole) || "manager",
+    is_active: row.is_active !== false,
+  };
+}
 
 async function ensureProfile(
   supabase: Awaited<ReturnType<typeof createServerSupabase>>,
@@ -19,19 +31,16 @@ async function ensureProfile(
   email?: string | null,
   metaName?: string | null
 ): Promise<Profile> {
-  const { data } = await supabase
+  const { data, error: selectError } = await supabase
     .from("profiles")
     .select("id, full_name, role, is_active")
     .eq("id", userId)
     .maybeSingle();
 
-  if (data) {
-    return {
-      id: data.id,
-      full_name: data.full_name,
-      role: (data.role as AppRole) || "manager",
-      is_active: data.is_active !== false,
-    };
+  if (data) return mapProfile(data);
+
+  if (selectError) {
+    console.warn("profiles select:", selectError.message);
   }
 
   const fullName = metaName || (email ? email.split("@")[0] : null);
@@ -46,20 +55,23 @@ async function ensureProfile(
     .select("id, full_name, role, is_active")
     .single();
 
-  if (error || !inserted) {
-    return {
-      id: userId,
-      full_name: fullName,
-      role: "manager",
-      is_active: true,
-    };
-  }
+  if (inserted) return mapProfile(inserted);
 
+  // Row already exists (unique) or RLS blocked insert — re-read, never invent role
+  const { data: again } = await supabase
+    .from("profiles")
+    .select("id, full_name, role, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (again) return mapProfile(again);
+
+  console.warn("profiles ensure fallback", error?.message);
   return {
-    id: inserted.id,
-    full_name: inserted.full_name,
-    role: (inserted.role as AppRole) || "manager",
-    is_active: inserted.is_active !== false,
+    id: userId,
+    full_name: fullName,
+    role: "manager",
+    is_active: true,
   };
 }
 
