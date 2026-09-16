@@ -8,9 +8,10 @@
 ## 2. Справочники (этапы / ответственные / типы / статусы)
 1. Open SQL Editor → New query.
 2. Paste and run `supabase/migrations/20260316_create_settings_directories.sql`
-   (создаёт таблицы, если их ещё нет, отключает RLS, сидирует этапы).
-3. Если таблицы уже были и сохранение всё равно «откатывается», дополнительно:
-   `supabase/migrations/20260316_settings_tables_rls_off.sql`
+   (создаёт таблицы, если их ещё нет).
+3. Если ошибка **violates row-level security policy** — выполните:
+   `supabase/migrations/20260316_fix_settings_rls.sql`
+   (снимает все политики RLS, отключает RLS, выдаёт GRANT).
 4. Для статусов при необходимости: `20260316_fix_status_labels_access.sql`.
 
 ## 3. Auth (обязательный вход)
