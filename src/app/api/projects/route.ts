@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { DEFAULT_STAGES, HANDOVER_STAGE_SUBSTEPS } from "@/lib/constants";
+import { DEFAULT_STAGES, normalizeTemplateStageName } from "@/lib/constants";
+import { STAGE_TEMPLATES, formatSubstepName } from "@/lib/stageTemplates";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 import { addProjectMember, getAccessibleProjectIds } from "@/lib/auth/projectAccess";
@@ -370,30 +371,53 @@ export async function POST(request: Request) {
       console.warn("project_members insert:", e);
     }
 
-    // 2. Получаем настройки этапов (setting_default_stages) или DEFAULT_STAGES
-    const { data: settingsStages, error: settingsStagesError } =
-      await supabase
-        .from("setting_default_stages")
-        .select("name, order_index")
-        .order("order_index", { ascending: true });
+    // 2. Этапы из справочника (+ подэтапы шаблона)
+    const { data: settingsStages, error: settingsStagesError } = await supabase
+      .from("setting_default_stages")
+      .select("id, name, order_index")
+      .order("order_index", { ascending: true });
 
     if (settingsStagesError) {
       console.error(settingsStagesError);
     }
 
-    const stageNames =
+    const stageTemplates =
       settingsStages && settingsStages.length > 0
-        ? settingsStages
+        ? [...settingsStages]
             .sort((a, b) => a.order_index - b.order_index)
-            .map((s) => s.name)
-        : DEFAULT_STAGES;
+            .map((s) => ({
+              id: Number(s.id),
+              name: normalizeTemplateStageName(s.name),
+            }))
+        : DEFAULT_STAGES.map((name, i) => ({ id: i + 1, name }));
 
-    // 3. Создаём этапы
-    if (stageNames.length > 0) {
+    const { data: settingSubsteps } = await supabase
+      .from("setting_default_substeps")
+      .select("stage_id, name, order_index")
+      .order("order_index", { ascending: true });
+
+    const subByStage = new Map<number, { name: string; order_index: number }[]>();
+    for (const row of settingSubsteps ?? []) {
+      const list = subByStage.get(Number(row.stage_id)) ?? [];
+      list.push({ name: row.name, order_index: row.order_index ?? list.length });
+      subByStage.set(Number(row.stage_id), list);
+    }
+
+    function substepsForTemplateStage(stageId: number, stageName: string) {
+      const fromDb = subByStage.get(stageId);
+      if (fromDb && fromDb.length > 0) {
+        return [...fromDb].sort((a, b) => a.order_index - b.order_index).map((s) => s.name);
+      }
+      const tpl = STAGE_TEMPLATES.find((t) => t.name === stageName);
+      return tpl ? tpl.substeps.map((s) => formatSubstepName(s)) : [];
+    }
+
+    // 3. Создаём этапы и копируем подэтапы из шаблона
+    if (stageTemplates.length > 0) {
       const now = new Date().toISOString();
-      const rows = stageNames.map((name, idx) => ({
+      const rows = stageTemplates.map((s, idx) => ({
         project_id: projectId,
-        name,
+        name: s.name,
         order_index: idx,
         status: "not_started",
         start_date: null,
@@ -407,23 +431,49 @@ export async function POST(request: Request) {
       const { data: insertedStages, error: stagesInsertError } = await supabase
         .from("stages")
         .insert(rows)
-        .select("id, name");
+        .select("id, name, order_index");
       if (stagesInsertError) {
         console.error(stagesInsertError);
       } else {
-        const handover = (insertedStages ?? []).find(
-          (s) => s.name === "Сдача и приёмка" || /^объект\s+заверш/i.test(s.name)
-        );
-        if (handover) {
-          const { error: subErr } = await supabase.from("stage_substeps").insert(
-            HANDOVER_STAGE_SUBSTEPS.map((name, j) => ({
-              stage_id: handover.id,
+        const subRows: {
+          stage_id: number;
+          name: string;
+          completed: boolean;
+          order_index: number;
+          not_required?: boolean;
+          on_review?: boolean;
+        }[] = [];
+        for (const created of insertedStages ?? []) {
+          const tpl = stageTemplates.find(
+            (t) => t.name === created.name || normalizeTemplateStageName(t.name) === created.name
+          );
+          const names = substepsForTemplateStage(tpl?.id ?? -1, created.name);
+          names.forEach((name, j) => {
+            subRows.push({
+              stage_id: created.id,
               name,
               completed: false,
               order_index: j,
-            }))
-          );
-          if (subErr) console.error(subErr);
+              not_required: false,
+              on_review: false,
+            });
+          });
+        }
+        if (subRows.length > 0) {
+          const { error: subErr } = await supabase.from("stage_substeps").insert(subRows);
+          if (subErr) {
+            // Columns not_required/on_review may be missing — retry minimal shape
+            console.warn("stage_substeps insert:", subErr.message);
+            const { error: retryErr } = await supabase.from("stage_substeps").insert(
+              subRows.map(({ stage_id, name, completed, order_index }) => ({
+                stage_id,
+                name,
+                completed,
+                order_index,
+              }))
+            );
+            if (retryErr) console.error(retryErr);
+          }
         }
       }
     }

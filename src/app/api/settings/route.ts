@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
-import { DEFAULT_STAGES, PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, normalizeTemplateStageName } from "@/lib/constants";
+import {
+  DEFAULT_STAGES,
+  PROJECT_STATUS_LABELS,
+  STAGE_STATUS_LABELS,
+  defaultStagesWithSubsteps,
+  normalizeTemplateStageName,
+} from "@/lib/constants";
+import { STAGE_TEMPLATES, formatSubstepName } from "@/lib/stageTemplates";
 import { requireAuth, requireSettingsAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
@@ -13,15 +20,34 @@ const DEFAULT_OBJECT_TYPES = [
   "Реконструкция",
 ];
 
+type StageRow = {
+  id: number;
+  name: string;
+  order_index: number;
+  substeps: { id: number; name: string; order_index: number }[];
+};
+
 function settingsTableHint(message: string, table: string) {
   const missing =
     /schema cache|Could not find the table|does not exist|relation .* does not exist/i.test(
       message
     );
   if (missing) {
-    return `Таблица ${table} ещё не создана. В Supabase SQL Editor выполните файл supabase/migrations/20260316_create_settings_directories.sql`;
+    return `Таблица ${table} ещё не создана. В Supabase SQL Editor выполните supabase/migrations/20260316_create_settings_directories.sql и 20260316_setting_default_substeps.sql, затем 20260316_fix_settings_rls.sql`;
   }
-  return `В Supabase SQL Editor: alter table public.${table} disable row level security;`;
+  return `В Supabase SQL Editor выполните supabase/migrations/20260316_fix_settings_rls.sql`;
+}
+
+function templateSubstepsForStage(stageName: string) {
+  const tpl = STAGE_TEMPLATES.find(
+    (t) => t.name === normalizeTemplateStageName(stageName)
+  );
+  if (!tpl) return [];
+  return tpl.substeps.map((s, j) => ({
+    id: j + 1,
+    name: formatSubstepName(s),
+    order_index: j,
+  }));
 }
 
 async function loadStatusOverrides(kind: "project" | "stage") {
@@ -30,7 +56,6 @@ async function loadStatusOverrides(kind: "project" | "stage") {
     .select("key, label")
     .eq("kind", kind);
   if (error) {
-    // Table may not exist until migration — fall back to constants
     console.warn("setting_status_labels:", error.message);
     return null;
   }
@@ -48,30 +73,69 @@ function mergeStatusLabels(
   return Object.entries(map).map(([key, label]) => ({ key, label }));
 }
 
+async function loadDefaultStages(): Promise<StageRow[]> {
+  const stagesRes = await supabase
+    .from("setting_default_stages")
+    .select("id, name, order_index")
+    .order("order_index");
+
+  if (stagesRes.error || !stagesRes.data?.length) {
+    if (stagesRes.error) console.warn("setting_default_stages:", stagesRes.error.message);
+    return defaultStagesWithSubsteps();
+  }
+
+  const stages = [...stagesRes.data]
+    .map((s, i) => ({
+      id: Number(s.id),
+      name: normalizeTemplateStageName(s.name),
+      order_index: typeof s.order_index === "number" ? s.order_index : i,
+    }))
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const { data: subRows, error: subErr } = await supabase
+    .from("setting_default_substeps")
+    .select("id, stage_id, name, order_index")
+    .order("order_index");
+
+  if (subErr) {
+    console.warn("setting_default_substeps:", subErr.message);
+    return stages.map((s) => ({
+      ...s,
+      substeps: templateSubstepsForStage(s.name),
+    }));
+  }
+
+  const byStage = new Map<number, { id: number; name: string; order_index: number }[]>();
+  for (const row of subRows ?? []) {
+    const list = byStage.get(Number(row.stage_id)) ?? [];
+    list.push({
+      id: Number(row.id),
+      name: row.name,
+      order_index: typeof row.order_index === "number" ? row.order_index : list.length,
+    });
+    byStage.set(Number(row.stage_id), list);
+  }
+
+  return stages.map((s) => {
+    const fromDb = byStage.get(s.id) ?? [];
+    return {
+      ...s,
+      substeps: fromDb.length > 0 ? fromDb.sort((a, b) => a.order_index - b.order_index) : templateSubstepsForStage(s.name),
+    };
+  });
+}
+
 async function loadSettings() {
-  const [managersRes, stagesRes, typesRes, projectStatusRes, stageStatusRes] =
+  const [managersRes, typesRes, projectStatusRes, stageStatusRes, default_stages] =
     await Promise.all([
       supabase.from("setting_managers").select("id, name").order("id"),
-      supabase.from("setting_default_stages").select("id, name, order_index").order("order_index"),
       supabase.from("setting_object_types").select("id, name").order("id"),
       loadStatusOverrides("project"),
       loadStatusOverrides("stage"),
+      loadDefaultStages(),
     ]);
 
   const managers = managersRes.data ?? [];
-  if (stagesRes.error) {
-    console.warn("setting_default_stages:", stagesRes.error.message);
-  }
-  const default_stages =
-    !stagesRes.error && stagesRes.data && stagesRes.data.length > 0
-      ? [...stagesRes.data]
-          .map((s, i) => ({
-            id: Number(s.id),
-            name: normalizeTemplateStageName(s.name),
-            order_index: typeof s.order_index === "number" ? s.order_index : i,
-          }))
-          .sort((a, b) => a.order_index - b.order_index)
-      : DEFAULT_STAGES.map((name, i) => ({ id: i + 1, name, order_index: i }));
   const object_types =
     typesRes.data && typesRes.data.length > 0
       ? typesRes.data
@@ -189,19 +253,42 @@ export async function PATCH(request: Request) {
     }
 
     if (body.default_stages !== undefined && Array.isArray(body.default_stages)) {
-      const rows = (body.default_stages as { id?: number; name: string; order_index?: number }[]).map(
-        (s, i) => ({
-          id: typeof s.id === "number" ? s.id : i + 1,
-          name: String(s.name ?? "").trim(),
-          order_index: typeof s.order_index === "number" ? s.order_index : i,
-        })
-      );
+      type IncomingStage = {
+        id?: number;
+        name: string;
+        order_index?: number;
+        substeps?: { id?: number; name: string; order_index?: number }[];
+      };
+      const incoming = body.default_stages as IncomingStage[];
+      const rows = incoming.map((s, i) => ({
+        id: typeof s.id === "number" ? s.id : i + 1,
+        name: normalizeTemplateStageName(String(s.name ?? "").trim()),
+        order_index: typeof s.order_index === "number" ? s.order_index : i,
+        substeps: (s.substeps ?? []).map((sub, j) => ({
+          id: typeof sub.id === "number" ? sub.id : (i + 1) * 1000 + j + 1,
+          name: String(sub.name ?? "").trim(),
+          order_index: typeof sub.order_index === "number" ? sub.order_index : j,
+        })),
+      }));
 
       if (rows.some((r) => !r.name)) {
         return NextResponse.json({ error: "Название этапа не может быть пустым" }, { status: 400 });
       }
 
-      // Full replace: update-in-place fails silently under RLS (0 rows, no error).
+      // Delete substages first (no cascade if FK missing), then stages
+      const { error: delSubError } = await supabase
+        .from("setting_default_substeps")
+        .delete()
+        .not("id", "is", null);
+      if (delSubError && !/schema cache|Could not find the table|does not exist/i.test(delSubError.message)) {
+        return NextResponse.json(
+          {
+            error: `Не удалось обновить подэтапы: ${delSubError.message}. ${settingsTableHint(delSubError.message, "setting_default_substeps")}`,
+          },
+          { status: 500 }
+        );
+      }
+
       const { error: delError } = await supabase
         .from("setting_default_stages")
         .delete()
@@ -216,7 +303,9 @@ export async function PATCH(request: Request) {
       }
 
       if (rows.length > 0) {
-        const { error: insError } = await supabase.from("setting_default_stages").insert(rows);
+        const { error: insError } = await supabase.from("setting_default_stages").insert(
+          rows.map(({ id, name, order_index }) => ({ id, name, order_index }))
+        );
         if (insError) {
           return NextResponse.json(
             {
@@ -225,9 +314,32 @@ export async function PATCH(request: Request) {
             { status: 500 }
           );
         }
+
+        const subInserts = rows.flatMap((s) =>
+          s.substeps
+            .filter((sub) => sub.name)
+            .map((sub) => ({
+              id: sub.id,
+              stage_id: s.id,
+              name: sub.name,
+              order_index: sub.order_index,
+            }))
+        );
+        if (subInserts.length > 0) {
+          const { error: subInsError } = await supabase
+            .from("setting_default_substeps")
+            .insert(subInserts);
+          if (subInsError) {
+            return NextResponse.json(
+              {
+                error: `Не удалось сохранить подэтапы: ${subInsError.message}. ${settingsTableHint(subInsError.message, "setting_default_substeps")}`,
+              },
+              { status: 500 }
+            );
+          }
+        }
       }
 
-      // Verify order actually persisted (RLS can no-op writes without error)
       const { data: verify, error: verifyError } = await supabase
         .from("setting_default_stages")
         .select("id, name, order_index")

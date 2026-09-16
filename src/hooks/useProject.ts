@@ -8,6 +8,9 @@ export interface StageSubstep {
   name: string;
   completed: boolean;
   order_index: number;
+  not_required?: boolean;
+  skip_reason?: string | null;
+  on_review?: boolean;
 }
 
 export interface Stage {

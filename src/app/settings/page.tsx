@@ -8,14 +8,16 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn } from "@/utils/cn";
 import { useStatusLabels } from "@/hooks/useStatusLabels";
 import {
-  HANDOVER_STAGE_SUBSTEPS,
+  defaultStagesWithSubsteps,
   normalizeTemplateStageName,
   objectWord,
+  substepWord,
 } from "@/lib/constants";
 import {
   ArrowLeft,
   Building2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   GripVertical,
   Home,
@@ -33,10 +35,16 @@ import {
 
 type TabId = "stages" | "managers" | "types" | "statuses";
 
+interface SettingSubstep {
+  id: number;
+  name: string;
+  order_index: number;
+}
 interface SettingDefaultStage {
   id: number;
   name: string;
   order_index: number;
+  substeps: SettingSubstep[];
 }
 interface SettingManager {
   id: number;
@@ -119,6 +127,8 @@ export default function SettingsPage() {
   const dragIndexRef = useRef<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [stageMenuId, setStageMenuId] = useState<number | null>(null);
+  const [expandedStageId, setExpandedStageId] = useState<number | null>(null);
+  const [newSubstepName, setNewSubstepName] = useState("");
 
   // managers
   const [editingManagerId, setEditingManagerId] = useState<number | null>(null);
@@ -153,22 +163,20 @@ export default function SettingsPage() {
           id: Number(s.id),
           name: normalizeTemplateStageName(s.name),
           order_index: typeof s.order_index === "number" ? s.order_index : i,
+          substeps: Array.isArray((s as SettingDefaultStage).substeps)
+            ? [...(s as SettingDefaultStage).substeps]
+                .map((sub, j) => ({
+                  id: Number(sub.id) || j + 1,
+                  name: sub.name,
+                  order_index: typeof sub.order_index === "number" ? sub.order_index : j,
+                }))
+                .sort((a, b) => a.order_index - b.order_index)
+            : [],
         }))
         .sort((a, b) => a.order_index - b.order_index)
         .map((s, i) => ({ ...s, order_index: i }));
       stageListRef.current = orderedStages;
       setStageList(orderedStages);
-      // Template-only rename: old «Объект завершён» → «Сдача и приёмка»
-      const needsRename = json.default_stages.some(
-        (s) => normalizeTemplateStageName(s.name) !== s.name
-      );
-      if (needsRename) {
-        void fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ default_stages: orderedStages }),
-        }).catch(() => {});
-      }
       setProjectDrafts(
         Object.fromEntries(json.project_statuses.map((s) => [s.key, s.label]))
       );
@@ -329,10 +337,43 @@ export default function SettingsPage() {
   };
 
   const applyStageOrder = (next: SettingDefaultStage[]) => {
-    const normalized = next.map((s, i) => ({ ...s, id: Number(s.id), order_index: i }));
+    const normalized = next.map((s, i) => ({
+      ...s,
+      id: Number(s.id),
+      order_index: i,
+      substeps: (s.substeps ?? []).map((sub, j) => ({
+        ...sub,
+        id: Number(sub.id) || j + 1,
+        order_index: j,
+      })),
+    }));
     stageListRef.current = normalized;
     setStageList(normalized);
     return normalized;
+  };
+
+  const updateStageSubsteps = (stageId: number, substeps: SettingSubstep[]) => {
+    const next = stageListRef.current.map((s) =>
+      Number(s.id) === Number(stageId)
+        ? {
+            ...s,
+            substeps: substeps.map((sub, j) => ({ ...sub, order_index: j })),
+          }
+        : s
+    );
+    return applyStageOrder(next);
+  };
+
+  const fillHouseTemplate = async () => {
+    if (
+      !window.confirm(
+        "Заменить шаблон этапов готовым чек-листом для домов? Это обновит только справочник, существующие объекты не изменятся."
+      )
+    )
+      return;
+    const next = defaultStagesWithSubsteps();
+    applyStageOrder(next);
+    await saveSection("default_stages", next);
   };
 
   const persistStagesOrder = async (ordered: SettingDefaultStage[]) => {
@@ -481,16 +522,14 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-lg font-semibold text-ink">Этапы строительства</h2>
               <p className="mt-1 text-sm text-muted">
-                {stageList.length} {stageList.length === 1 ? "этап" : "этапов"} · этот список
-                используется при создании новых объектов. Этапы существующих объектов редактируются в
-                самих проектах.
+                {stageList.length} {stageList.length === 1 ? "этап" : "этапов"} · шаблон копируется при
+                создании новых объектов. Этапы и подэтапы существующих объектов не меняются.
               </p>
-              {stageList.some((s) => s.name === "Сдача и приёмка") && (
-                <p className="mt-2 text-caption text-muted">
-                  У «Сдача и приёмка» при создании нового объекта добавляется чек-лист:{" "}
-                  {HANDOVER_STAGE_SUBSTEPS.slice(0, 3).join(", ")}…
-                </p>
-              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={fillHouseTemplate} disabled={saving}>
+                  Заполнить шаблоном домов
+                </Button>
+              </div>
             </div>
             <Button
               className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
@@ -537,6 +576,7 @@ export default function SettingsPage() {
                         id: Math.max(0, ...stageList.map((s) => Number(s.id))) + 1,
                         name,
                         order_index: stageList.length,
+                        substeps: [],
                       },
                     ];
                     applyStageOrder(next);
@@ -560,6 +600,7 @@ export default function SettingsPage() {
                       id: Math.max(0, ...stageList.map((s) => Number(s.id))) + 1,
                       name,
                       order_index: stageList.length,
+                      substeps: [],
                     },
                   ];
                   applyStageOrder(next);
@@ -589,42 +630,61 @@ export default function SettingsPage() {
               const realIndex = q
                 ? stageList.findIndex((x) => Number(x.id) === Number(s.id))
                 : visualIndex;
+              const subCount = s.substeps?.length ?? 0;
+              const expanded = expandedStageId === s.id;
               return (
                 <li
                   key={s.id}
                   data-stage-index={realIndex}
                   className={cn(
-                    "flex min-h-[60px] items-center gap-2 py-2 transition-colors",
-                    "hover:bg-surface/80",
+                    "py-2 transition-colors",
                     dragIndex === realIndex && "bg-cream/60 opacity-80"
                   )}
                 >
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onPointerDown={onStagePointerDown(realIndex)}
-                    onPointerMove={onStagePointerMove}
-                    onPointerUp={onStagePointerUp}
-                    onPointerCancel={onStagePointerUp}
-                    className="inline-flex h-11 w-9 cursor-grab touch-none items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
-                    aria-label="Переместить"
-                    title="Перетащите"
-                  >
-                    <GripVertical className="h-4 w-4 pointer-events-none" />
-                  </span>
-                  <span className="w-7 shrink-0 text-center text-sm font-semibold text-muted">
-                    {realIndex + 1}
-                  </span>
-                  {editingStageId === s.id ? (
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" data-no-drag>
-                      <Input
-                        value={editingStageName}
-                        onChange={(e) => setEditingStageName(e.target.value)}
-                        className="min-w-[180px] flex-1"
-                        autoFocus
-                        onKeyDown={async (e) => {
-                          if (e.key === "Escape") setEditingStageId(null);
-                          if (e.key === "Enter") {
+                  <div className="flex min-h-[60px] items-center gap-2 hover:bg-surface/80 rounded-[10px] px-1">
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onPointerDown={onStagePointerDown(realIndex)}
+                      onPointerMove={onStagePointerMove}
+                      onPointerUp={onStagePointerUp}
+                      onPointerCancel={onStagePointerUp}
+                      className="inline-flex h-11 w-9 cursor-grab touch-none items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
+                      aria-label="Переместить"
+                      title="Перетащите"
+                    >
+                      <GripVertical className="h-4 w-4 pointer-events-none" />
+                    </span>
+                    <span className="w-7 shrink-0 text-center text-sm font-semibold text-muted">
+                      {realIndex + 1}
+                    </span>
+                    {editingStageId === s.id ? (
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" data-no-drag>
+                        <Input
+                          value={editingStageName}
+                          onChange={(e) => setEditingStageName(e.target.value)}
+                          className="min-w-[180px] flex-1"
+                          autoFocus
+                          onKeyDown={async (e) => {
+                            if (e.key === "Escape") setEditingStageId(null);
+                            if (e.key === "Enter") {
+                              const name = normalizeName(editingStageName);
+                              if (!name) return setError("Название не может быть пустым");
+                              if (isDuplicate(name, stageList, s.id))
+                                return setError("Такой этап уже есть");
+                              const next = stageList.map((x) =>
+                                Number(x.id) === Number(s.id) ? { ...x, name } : x
+                              );
+                              applyStageOrder(next);
+                              const ok = await saveSection("default_stages", next);
+                              if (ok) setEditingStageId(null);
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          disabled={saving}
+                          onClick={async () => {
                             const name = normalizeName(editingStageName);
                             if (!name) return setError("Название не может быть пустым");
                             if (isDuplicate(name, stageList, s.id))
@@ -635,113 +695,223 @@ export default function SettingsPage() {
                             applyStageOrder(next);
                             const ok = await saveSection("default_stages", next);
                             if (ok) setEditingStageId(null);
-                          }
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        disabled={saving}
-                        onClick={async () => {
-                          const name = normalizeName(editingStageName);
-                          if (!name) return setError("Название не может быть пустым");
-                          if (isDuplicate(name, stageList, s.id))
-                            return setError("Такой этап уже есть");
-                          const next = stageList.map((x) =>
-                            Number(x.id) === Number(s.id) ? { ...x, name } : x
-                          );
-                          applyStageOrder(next);
-                          const ok = await saveSection("default_stages", next);
-                          if (ok) setEditingStageId(null);
-                        }}
-                      >
-                        Сохранить
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingStageId(null)}>
-                        Отмена
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink">
-                        {s.name}
-                      </span>
-                      <button
-                        type="button"
-                        data-no-drag
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
-                        aria-label="Редактировать"
-                        onClick={() => {
-                          setStageMenuId(null);
-                          setEditingStageId(s.id);
-                          setEditingStageName(s.name);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <div className="relative" data-no-drag>
-                        <button
-                          type="button"
-                          className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
-                          aria-label="Ещё действия"
-                          aria-expanded={stageMenuId === s.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setStageMenuId((prev) => (prev === s.id ? null : s.id));
                           }}
                         >
-                          <MoreHorizontal className="h-4 w-4" />
+                          Сохранить
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingStageId(null)}>
+                          Отмена
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          data-no-drag
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => {
+                            setExpandedStageId((prev) => (prev === s.id ? null : s.id));
+                            setNewSubstepName("");
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            {expanded ? (
+                              <ChevronDown className="h-4 w-4 shrink-0 text-muted" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted" />
+                            )}
+                            <span className="truncate text-[15px] font-medium text-ink">
+                              {s.name}
+                              <span className="ml-2 font-normal text-muted">
+                                · {subCount} {substepWord(subCount)}
+                              </span>
+                            </span>
+                          </span>
                         </button>
-                        {stageMenuId === s.id && (
-                          <div
-                            className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-line bg-white py-1 shadow-soft"
-                            onClick={(e) => e.stopPropagation()}
+                        <button
+                          type="button"
+                          data-no-drag
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                          aria-label="Редактировать"
+                          onClick={() => {
+                            setStageMenuId(null);
+                            setEditingStageId(s.id);
+                            setEditingStageName(s.name);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <div className="relative" data-no-drag>
+                          <button
+                            type="button"
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                            aria-label="Ещё действия"
+                            aria-expanded={stageMenuId === s.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStageMenuId((prev) => (prev === s.id ? null : s.id));
+                            }}
                           >
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
-                              disabled={realIndex <= 0}
-                              onClick={() => {
-                                setStageMenuId(null);
-                                moveStageAt(realIndex, -1);
-                              }}
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                          {stageMenuId === s.id && (
+                            <div
+                              className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-line bg-white py-1 shadow-soft"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              <ChevronUp className="h-4 w-4 text-muted" /> Выше
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
-                              disabled={realIndex >= stageList.length - 1}
-                              onClick={() => {
-                                setStageMenuId(null);
-                                moveStageAt(realIndex, 1);
-                              }}
-                            >
-                              <ChevronDown className="h-4 w-4 text-muted" /> Ниже
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
-                              onClick={async () => {
-                                setStageMenuId(null);
-                                if (
-                                  !window.confirm(
-                                    `Удалить этап «${s.name}» из шаблона? На существующие объекты это не повлияет.`
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
+                                disabled={realIndex <= 0}
+                                onClick={() => {
+                                  setStageMenuId(null);
+                                  moveStageAt(realIndex, -1);
+                                }}
+                              >
+                                <ChevronUp className="h-4 w-4 text-muted" /> Выше
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-ink hover:bg-page disabled:opacity-40"
+                                disabled={realIndex >= stageList.length - 1}
+                                onClick={() => {
+                                  setStageMenuId(null);
+                                  moveStageAt(realIndex, 1);
+                                }}
+                              >
+                                <ChevronDown className="h-4 w-4 text-muted" /> Ниже
+                              </button>
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                                onClick={async () => {
+                                  setStageMenuId(null);
+                                  if (
+                                    !window.confirm(
+                                      `Удалить этап «${s.name}» из шаблона? На существующие объекты это не повлияет.`
+                                    )
                                   )
-                                )
-                                  return;
-                                const next = stageList
-                                  .filter((x) => Number(x.id) !== Number(s.id))
-                                  .map((x, i) => ({ ...x, order_index: i }));
-                                applyStageOrder(next);
+                                    return;
+                                  const next = stageList
+                                    .filter((x) => Number(x.id) !== Number(s.id))
+                                    .map((x, i) => ({ ...x, order_index: i }));
+                                  applyStageOrder(next);
+                                  await saveSection("default_stages", next);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" /> Удалить
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {expanded && editingStageId !== s.id && (
+                    <div className="ml-12 mr-2 mt-2 mb-2 space-y-2 rounded-[12px] border border-line bg-page/80 p-3" data-no-drag>
+                      {(s.substeps ?? []).length === 0 && (
+                        <p className="text-sm text-muted">Пока нет подэтапов — добавьте пункты чек-листа</p>
+                      )}
+                      <ul className="space-y-1">
+                        {(s.substeps ?? []).map((sub, subIdx) => (
+                          <li
+                            key={sub.id}
+                            className="flex min-h-[44px] items-center gap-2 rounded-[10px] bg-white px-2 py-1 border border-line"
+                          >
+                            <span className="w-6 text-center text-caption text-muted">{subIdx + 1}</span>
+                            <span className="min-w-0 flex-1 truncate text-sm text-ink">{sub.name}</span>
+                            <button
+                              type="button"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] text-muted hover:bg-surface disabled:opacity-30"
+                              aria-label="Выше"
+                              disabled={subIdx === 0 || saving}
+                              onClick={async () => {
+                                const list = [...(s.substeps ?? [])];
+                                [list[subIdx - 1], list[subIdx]] = [list[subIdx], list[subIdx - 1]];
+                                const next = updateStageSubsteps(s.id, list);
                                 await saveSection("default_stages", next);
                               }}
                             >
-                              <Trash2 className="h-4 w-4" /> Удалить
+                              <ChevronUp className="h-3.5 w-3.5" />
                             </button>
-                          </div>
-                        )}
+                            <button
+                              type="button"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] text-muted hover:bg-surface disabled:opacity-30"
+                              aria-label="Ниже"
+                              disabled={subIdx >= (s.substeps?.length ?? 0) - 1 || saving}
+                              onClick={async () => {
+                                const list = [...(s.substeps ?? [])];
+                                [list[subIdx], list[subIdx + 1]] = [list[subIdx + 1], list[subIdx]];
+                                const next = updateStageSubsteps(s.id, list);
+                                await saveSection("default_stages", next);
+                              }}
+                            >
+                              <ChevronDown className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] text-muted hover:bg-red-50 hover:text-red-600"
+                              aria-label="Удалить подэтап"
+                              onClick={async () => {
+                                const list = (s.substeps ?? []).filter((x) => x.id !== sub.id);
+                                const next = updateStageSubsteps(s.id, list);
+                                await saveSection("default_stages", next);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Input
+                          value={expandedStageId === s.id ? newSubstepName : ""}
+                          onChange={(e) => setNewSubstepName(e.target.value)}
+                          placeholder="Новый подэтап"
+                          className="min-w-[200px] flex-1"
+                          onKeyDown={async (e) => {
+                            if (e.key !== "Enter") return;
+                            const name = normalizeName(newSubstepName);
+                            if (!name) return;
+                            const list = [
+                              ...(s.substeps ?? []),
+                              {
+                                id:
+                                  Math.max(0, ...(s.substeps ?? []).map((x) => Number(x.id))) + 1,
+                                name,
+                                order_index: s.substeps?.length ?? 0,
+                              },
+                            ];
+                            const next = updateStageSubsteps(s.id, list);
+                            setNewSubstepName("");
+                            await saveSection("default_stages", next);
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          disabled={saving}
+                          onClick={async () => {
+                            const name = normalizeName(newSubstepName);
+                            if (!name) return setError("Укажите название подэтапа");
+                            const list = [
+                              ...(s.substeps ?? []),
+                              {
+                                id:
+                                  Math.max(0, ...(s.substeps ?? []).map((x) => Number(x.id))) + 1,
+                                name,
+                                order_index: s.substeps?.length ?? 0,
+                              },
+                            ];
+                            const next = updateStageSubsteps(s.id, list);
+                            setNewSubstepName("");
+                            await saveSection("default_stages", next);
+                          }}
+                        >
+                          <Plus className="mr-1 h-4 w-4" /> Добавить
+                        </Button>
                       </div>
-                    </>
+                    </div>
                   )}
                 </li>
               );

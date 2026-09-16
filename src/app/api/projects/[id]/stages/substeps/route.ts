@@ -70,11 +70,32 @@ export async function PATCH(request: Request) {
     const substepId = Number(body.substepId);
     if (!substepId) return NextResponse.json({ error: "Укажите substepId" }, { status: 400 });
 
-    const updates: { name?: string; completed?: boolean } = {};
+    const updates: {
+      name?: string;
+      completed?: boolean;
+      not_required?: boolean;
+      skip_reason?: string | null;
+      on_review?: boolean;
+    } = {};
     if (body.name !== undefined) updates.name = String(body.name).trim();
     if (body.completed !== undefined) updates.completed = Boolean(body.completed);
+    if (body.not_required !== undefined) updates.not_required = Boolean(body.not_required);
+    if (body.skip_reason !== undefined) {
+      updates.skip_reason = body.skip_reason == null ? null : String(body.skip_reason);
+    }
+    if (body.on_review !== undefined) updates.on_review = Boolean(body.on_review);
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "Нет данных для обновления" }, { status: 400 });
+    }
+
+    // If marked not required, clear completed; if completed, clear review
+    if (updates.not_required) {
+      updates.completed = false;
+      updates.on_review = false;
+    }
+    if (updates.completed) {
+      updates.on_review = false;
+      updates.not_required = false;
     }
 
     const { error } = await supabase.from("stage_substeps").update(updates).eq("id", substepId);

@@ -322,6 +322,47 @@ export default function ProjectPage() {
     refetch();
   };
 
+  const markSubstepNotRequired = async (substepId: number) => {
+    if (!project) return;
+    const reason = window.prompt("Почему пункт не требуется? (необязательно)") ?? "";
+    await fetch(`/api/projects/${project.id}/stages/substeps`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        substepId,
+        not_required: true,
+        skip_reason: reason.trim() || null,
+      }),
+    });
+    refetch();
+  };
+
+  const markSubstepOnReview = async (substepId: number, on_review: boolean) => {
+    if (!project) return;
+    await fetch(`/api/projects/${project.id}/stages/substeps`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ substepId, on_review, completed: false, not_required: false }),
+    });
+    refetch();
+  };
+
+  const restoreSubstep = async (substepId: number) => {
+    if (!project) return;
+    await fetch(`/api/projects/${project.id}/stages/substeps`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        substepId,
+        not_required: false,
+        on_review: false,
+        completed: false,
+        skip_reason: null,
+      }),
+    });
+    refetch();
+  };
+
   const addSubstep = async (stageId: number) => {
     if (!project || !newSubstepName.trim()) return;
     await fetch(`/api/projects/${project.id}/stages/substeps`, {
@@ -703,16 +744,72 @@ export default function ProjectPage() {
                         {(stage.substeps?.length ?? 0) > 0 && (
                           <ul className="space-y-1.5">
                             {stage.substeps!.map((sub) => (
-                              <li key={sub.id}>
-                                <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                              <li key={sub.id} className="rounded-[10px] border border-line bg-white px-2.5 py-2">
+                                <div className="flex items-start gap-2">
                                   <input
                                     type="checkbox"
-                                    checked={sub.completed}
+                                    checked={!!sub.completed}
+                                    disabled={!!sub.not_required}
                                     onChange={() => toggleSubstep(sub.id, !sub.completed)}
-                                    className="rounded border-line text-green"
+                                    className="mt-0.5 rounded border-line text-green"
                                   />
-                                  <span className={sub.completed ? "line-through text-muted" : "text-ink"}>{sub.name}</span>
-                                </label>
+                                  <div className="min-w-0 flex-1">
+                                    <p
+                                      className={cn(
+                                        "text-sm",
+                                        sub.not_required
+                                          ? "text-muted line-through"
+                                          : sub.completed
+                                            ? "text-muted line-through"
+                                            : "text-ink"
+                                      )}
+                                    >
+                                      {sub.name}
+                                    </p>
+                                    <div className="mt-1 flex flex-wrap gap-1.5">
+                                      {sub.not_required && (
+                                        <span className="rounded-full bg-[#E8EEEC] px-2 py-0.5 text-[11px] text-[#3D524A]">
+                                          Не требуется
+                                          {sub.skip_reason ? `: ${sub.skip_reason}` : ""}
+                                        </span>
+                                      )}
+                                      {sub.on_review && !sub.not_required && (
+                                        <span className="rounded-full bg-[#FFF6E5] px-2 py-0.5 text-[11px] text-[#8A6A20]">
+                                          На проверке
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 flex-col gap-1">
+                                    {!sub.not_required && !sub.completed && (
+                                      <button
+                                        type="button"
+                                        className="text-[11px] text-muted hover:text-ink"
+                                        onClick={() => markSubstepOnReview(sub.id, !sub.on_review)}
+                                      >
+                                        {sub.on_review ? "Снять проверку" : "На проверку"}
+                                      </button>
+                                    )}
+                                    {!sub.not_required && (
+                                      <button
+                                        type="button"
+                                        className="text-[11px] text-muted hover:text-ink"
+                                        onClick={() => markSubstepNotRequired(sub.id)}
+                                      >
+                                        Не требуется
+                                      </button>
+                                    )}
+                                    {sub.not_required && (
+                                      <button
+                                        type="button"
+                                        className="text-[11px] text-orange hover:text-orange/80"
+                                        onClick={() => restoreSubstep(sub.id)}
+                                      >
+                                        Вернуть
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
                               </li>
                             ))}
                           </ul>
