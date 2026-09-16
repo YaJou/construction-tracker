@@ -7,9 +7,9 @@ import {
   useProjects,
   type ProjectListItem,
 } from "@/hooks/useProjects";
-import { PROJECT_STATUS_LABELS } from "@/lib/constants";
 import { Select } from "@/components/ui/Select";
 import { cn } from "@/utils/cn";
+import { projectStatusLabel, useStatusLabels } from "@/hooks/useStatusLabels";
 import {
   Plus,
   Search,
@@ -104,6 +104,7 @@ function statusBarClass(p: ProjectListItem) {
 
 export default function DashboardPage() {
   const pathname = usePathname();
+  const { project: statusLabels } = useStatusLabels();
   const [listType, setListType] = useState<ListType>("active");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -389,7 +390,7 @@ export default function DashboardPage() {
     cityFilter && { key: "city", label: cityFilter },
     statusFilter && {
       key: "status",
-      label: PROJECT_STATUS_LABELS[statusFilter] || statusFilter,
+      label: projectStatusLabel(statusLabels, statusFilter),
     },
   ].filter(Boolean) as { key: string; label: string }[];
 
@@ -471,7 +472,7 @@ export default function DashboardPage() {
         aria-label="Статус"
       >
         <option value="">Все статусы</option>
-        {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
+        {Object.entries(statusLabels).map(([value, label]) => (
           <option key={value} value={value}>
             {label}
           </option>
@@ -843,7 +844,7 @@ export default function DashboardPage() {
                   </div>
                   <p className="text-caption text-muted truncate">{project.address}</p>
                 </div>
-                <p className="text-sm text-muted w-28">{PROJECT_STATUS_LABELS[project.status]}</p>
+                <p className="text-sm text-muted w-28">{projectStatusLabel(statusLabels, project.status)}</p>
                 <p className="text-sm font-medium text-ink w-16">{project.progress_percent}%</p>
                 <ChevronRight className="w-4 h-4 text-muted hidden sm:block" />
               </Link>
@@ -977,7 +978,7 @@ export default function DashboardPage() {
                             locale: ru,
                           })}
                           {" · "}
-                          {PROJECT_STATUS_LABELS[p.status]}
+                          {projectStatusLabel(statusLabels, p.status)}
                         </p>
                       </div>
                       <span
@@ -1049,6 +1050,7 @@ function ProjectCard({
   onArchive: () => void;
   onPreviewPhoto: (photo: { file_path: string; comment: string | null }) => void;
 }) {
+  const { project: statusLabels } = useStatusLabels();
   const href = isDemo ? "/projects/new" : `/projects/${project.id}`;
   const days = project.planned_end_date
     ? differenceInCalendarDays(new Date(project.planned_end_date), new Date())
@@ -1118,7 +1120,7 @@ function ProjectCard({
         </div>
 
         <span className="inline-flex rounded-full bg-surface text-green px-2.5 py-1 text-caption font-medium">
-          {PROJECT_STATUS_LABELS[project.status] || project.status}
+          {projectStatusLabel(statusLabels, project.status)}
         </span>
 
         <div>

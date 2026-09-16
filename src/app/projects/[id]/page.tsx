@@ -14,7 +14,12 @@ import {
 } from "@/components/project/ProjectTabSections";
 import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
-import { PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, EXPENSE_CATEGORIES } from "@/lib/constants";
+import { EXPENSE_CATEGORIES } from "@/lib/constants";
+import {
+  projectStatusLabel,
+  stageStatusLabel,
+  useStatusLabels,
+} from "@/hooks/useStatusLabels";
 import {
   formatThousands,
   parseFormattedNumber,
@@ -111,6 +116,7 @@ function CircularProgress({ value, size = 120 }: { value: number; size?: number 
 export default function ProjectPage() {
   const params = useParams();
   const id = Number(params.id);
+  const { project: projectLabels, stage: stageLabels } = useStatusLabels();
   const { project, loading, error, refetch } = useProject(isNaN(id) ? null : id);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [photoStageId, setPhotoStageId] = useState("");
@@ -667,7 +673,7 @@ export default function ProjectPage() {
                       <div className="min-w-0 flex-1">
                         <p className={cn("font-medium", isDone ? "text-muted" : "text-ink")}>{stage.name}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-                          <span>{STAGE_STATUS_LABELS[stage.status] || stage.status}</span>
+                          <span>{stageStatusLabel(stageLabels, stage.status)}</span>
                           <span className="tabular-nums">{stage.progress_percent}%</span>
                           {stage.start_date && (
                             <span>с {format(new Date(stage.start_date), "d MMM", { locale: ru })}</span>
@@ -794,7 +800,7 @@ export default function ProjectPage() {
                             className="min-w-[140px] w-auto"
                             aria-label={`Статус этапа ${stage.name}`}
                           >
-                            {Object.entries(STAGE_STATUS_LABELS).map(([val, label]) => (
+                            {Object.entries(stageLabels).map(([val, label]) => (
                               <option key={val} value={val}>
                                 {label}
                               </option>
@@ -920,7 +926,7 @@ export default function ProjectPage() {
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-caption font-medium", statusChipClass)}>
-                {PROJECT_STATUS_LABELS[project.status] || project.status}
+                {projectStatusLabel(projectLabels, project.status)}
               </span>
               {project.manager && (
                 <span className="inline-flex items-center gap-1.5 text-sm text-muted">

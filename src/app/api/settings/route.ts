@@ -63,7 +63,33 @@ async function loadSettings() {
     object_types,
     project_statuses: mergeStatusLabels(PROJECT_STATUS_LABELS, projectStatusRes),
     stage_statuses: mergeStatusLabels(STAGE_STATUS_LABELS, stageStatusRes),
+    usage: await loadUsage(managers.map((m) => m.name), object_types.map((o) => o.name)),
   };
+}
+
+async function loadUsage(managerNames: string[], typeNames: string[]) {
+  const [{ data: projects }, { data: stages }] = await Promise.all([
+    supabase.from("projects").select("manager, foreman, object_type"),
+    supabase.from("stages").select("responsible"),
+  ]);
+
+  const managerUsage: Record<string, number> = {};
+  for (const name of managerNames) managerUsage[name] = 0;
+  const typeUsage: Record<string, number> = {};
+  for (const name of typeNames) typeUsage[name] = 0;
+
+  for (const p of projects ?? []) {
+    if (p.manager && managerUsage[p.manager] !== undefined) managerUsage[p.manager]++;
+    if (p.foreman && managerUsage[p.foreman] !== undefined) managerUsage[p.foreman]++;
+    if (p.object_type && typeUsage[p.object_type] !== undefined) typeUsage[p.object_type]++;
+  }
+  for (const s of stages ?? []) {
+    if (s.responsible && managerUsage[s.responsible] !== undefined) {
+      managerUsage[s.responsible]++;
+    }
+  }
+
+  return { managers: managerUsage, object_types: typeUsage };
 }
 
 export async function GET() {
@@ -111,6 +137,26 @@ export async function PATCH(request: Request) {
     const body = await request.json();
 
     if (body.managers !== undefined && Array.isArray(body.managers)) {
+      // Rename propagation: keep project/stage assignments when ФИО changes
+      const { data: prevManagers } = await supabase
+        .from("setting_managers")
+        .select("id, name");
+      const nextById = new Map<number, string>(
+        (body.managers as { id?: number; name: string }[])
+          .filter((m) => typeof m.id === "number")
+          .map((m) => [m.id as number, m.name])
+      );
+      for (const prev of prevManagers ?? []) {
+        const nextName = nextById.get(prev.id);
+        if (nextName && nextName !== prev.name) {
+          await Promise.all([
+            supabase.from("projects").update({ manager: nextName }).eq("manager", prev.name),
+            supabase.from("projects").update({ foreman: nextName }).eq("foreman", prev.name),
+            supabase.from("stages").update({ responsible: nextName }).eq("responsible", prev.name),
+          ]);
+        }
+      }
+
       await supabase.from("setting_managers").delete().neq("id", 0);
       if (body.managers.length > 0) {
         await supabase.from("setting_managers").insert(
@@ -140,6 +186,24 @@ export async function PATCH(request: Request) {
     if (body.object_types !== undefined && Array.isArray(body.object_types)) {
       const typesRes = await supabase.from("setting_object_types").select("id").limit(1);
       if (!typesRes.error) {
+        const { data: prevTypes } = await supabase
+          .from("setting_object_types")
+          .select("id, name");
+        const nextById = new Map<number, string>(
+          (body.object_types as { id?: number; name: string }[])
+            .filter((o) => typeof o.id === "number")
+            .map((o) => [o.id as number, o.name])
+        );
+        for (const prev of prevTypes ?? []) {
+          const nextName = nextById.get(prev.id);
+          if (nextName && nextName !== prev.name) {
+            await supabase
+              .from("projects")
+              .update({ object_type: nextName })
+              .eq("object_type", prev.name);
+          }
+        }
+
         await supabase.from("setting_object_types").delete().neq("id", 0);
         if (body.object_types.length > 0) {
           await supabase.from("setting_object_types").insert(

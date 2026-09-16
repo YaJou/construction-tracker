@@ -1,39 +1,83 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { ArrowLeft, Loader2, Pencil, Trash2, Plus } from "lucide-react";
+import { cn } from "@/utils/cn";
+import { useStatusLabels } from "@/hooks/useStatusLabels";
+import {
+  ArrowLeft,
+  Building2,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+  Loader2,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
+
+type TabId = "stages" | "managers" | "types" | "statuses";
 
 interface SettingDefaultStage {
   id: number;
   name: string;
   order_index: number;
 }
-
 interface SettingManager {
   id: number;
   name: string;
 }
-
-interface SettingStatusItem {
-  key: string;
-  label: string;
-}
-
 interface SettingObjectType {
   id: number;
   name: string;
 }
-
+interface SettingStatusItem {
+  key: string;
+  label: string;
+}
 interface SettingsData {
   default_stages: SettingDefaultStage[];
   managers: SettingManager[];
   object_types: SettingObjectType[];
   project_statuses: SettingStatusItem[];
   stage_statuses: SettingStatusItem[];
+  usage?: {
+    managers: Record<string, number>;
+    object_types: Record<string, number>;
+  };
+}
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: "stages", label: "Этапы" },
+  { id: "managers", label: "Ответственные" },
+  { id: "types", label: "Типы объектов" },
+  { id: "statuses", label: "Статусы" },
+];
+
+const PROJECT_BADGE: Record<string, string> = {
+  planning: "bg-[#E8EEEC] text-[#3D524A]",
+  construction: "bg-green/10 text-green",
+  paused: "bg-amber-100 text-amber-800",
+  completed: "bg-green text-white",
+};
+
+const STAGE_BADGE: Record<string, string> = {
+  not_started: "bg-[#E8EEEC] text-[#3D524A]",
+  in_progress: "bg-green/10 text-green",
+  completed: "bg-green text-white",
+};
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function isSettingsData(value: unknown): value is SettingsData {
@@ -42,30 +86,49 @@ function isSettingsData(value: unknown): value is SettingsData {
   return (
     Array.isArray(v.default_stages) &&
     Array.isArray(v.managers) &&
+    Array.isArray(v.object_types) &&
     Array.isArray(v.project_statuses) &&
     Array.isArray(v.stage_statuses)
   );
 }
 
 export default function SettingsPage() {
+  const { refresh: refreshLabels } = useStatusLabels();
+  const [tab, setTab] = useState<TabId>("stages");
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [okMessage, setOkMessage] = useState("");
-  const [newStageName, setNewStageName] = useState("");
-  const [newManagerName, setNewManagerName] = useState("");
+  const [search, setSearch] = useState("");
+
+  // stages
   const [editingStageId, setEditingStageId] = useState<number | null>(null);
   const [editingStageName, setEditingStageName] = useState("");
+  const [addingStage, setAddingStage] = useState(false);
+  const [newStageName, setNewStageName] = useState("");
+  const newStageRef = useRef<HTMLInputElement>(null);
+  const [dragId, setDragId] = useState<number | null>(null);
+
+  // managers
   const [editingManagerId, setEditingManagerId] = useState<number | null>(null);
   const [editingManagerName, setEditingManagerName] = useState("");
-  const [newObjectTypeName, setNewObjectTypeName] = useState("");
-  const [editingObjectTypeId, setEditingObjectTypeId] = useState<number | null>(null);
-  const [editingObjectTypeName, setEditingObjectTypeName] = useState("");
-  const [projectStatusDrafts, setProjectStatusDrafts] = useState<Record<string, string>>({});
-  const [stageStatusDrafts, setStageStatusDrafts] = useState<Record<string, string>>({});
+  const [addingManager, setAddingManager] = useState(false);
+  const [newManagerName, setNewManagerName] = useState("");
+  const newManagerRef = useRef<HTMLInputElement>(null);
 
-  const load = async () => {
+  // types
+  const [editingTypeId, setEditingTypeId] = useState<number | null>(null);
+  const [editingTypeName, setEditingTypeName] = useState("");
+  const [addingType, setAddingType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
+  const newTypeRef = useRef<HTMLInputElement>(null);
+
+  // statuses drafts
+  const [projectDrafts, setProjectDrafts] = useState<Record<string, string>>({});
+  const [stageDrafts, setStageDrafts] = useState<Record<string, string>>({});
+
+  const load = useCallback(async () => {
     setError("");
     try {
       const r = await fetch("/api/settings", { cache: "no-store" });
@@ -75,25 +138,67 @@ export default function SettingsPage() {
         return;
       }
       setData(json);
-      setProjectStatusDrafts(
+      setProjectDrafts(
         Object.fromEntries(json.project_statuses.map((s) => [s.key, s.label]))
       );
-      setStageStatusDrafts(
-        Object.fromEntries(json.stage_statuses.map((s) => [s.key, s.label]))
-      );
+      setStageDrafts(Object.fromEntries(json.stage_statuses.map((s) => [s.key, s.label])));
     } catch {
       setError("Ошибка сети при загрузке справочников");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    if (addingStage) newStageRef.current?.focus();
+  }, [addingStage]);
+  useEffect(() => {
+    if (addingManager) newManagerRef.current?.focus();
+  }, [addingManager]);
+  useEffect(() => {
+    if (addingType) newTypeRef.current?.focus();
+  }, [addingType]);
+
+  const statusesDirty = useMemo(() => {
+    if (!data) return false;
+    return (
+      data.project_statuses.some((s) => (projectDrafts[s.key] ?? s.label) !== s.label) ||
+      data.stage_statuses.some((s) => (stageDrafts[s.key] ?? s.label) !== s.label)
+    );
+  }, [data, projectDrafts, stageDrafts]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!statusesDirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [statusesDirty]);
+
+  const switchTab = (next: TabId) => {
+    if (next === tab) return;
+    if (statusesDirty && tab === "statuses") {
+      const leave = window.confirm("Есть несохранённые статусы. Уйти без сохранения?");
+      if (!leave) return;
+      if (data) {
+        setProjectDrafts(
+          Object.fromEntries(data.project_statuses.map((s) => [s.key, s.label]))
+        );
+        setStageDrafts(Object.fromEntries(data.stage_statuses.map((s) => [s.key, s.label])));
+      }
+    }
+    setSearch("");
+    setTab(next);
+  };
 
   const saveSection = async (section: keyof SettingsData, value: unknown) => {
-    if (!data) return;
+    if (!data) return false;
     setSaving(true);
     setError("");
     setOkMessage("");
@@ -105,126 +210,95 @@ export default function SettingsPage() {
       });
       const updated = await res.json();
       if (!res.ok || !isSettingsData(updated)) {
-        setError(
-          updated?.error ||
-            "Не удалось сохранить. Если правили статусы — выполните SQL-миграцию в Supabase."
-        );
-        return;
+        setError(updated?.error || "Не удалось сохранить");
+        return false;
       }
       setData(updated);
-      setProjectStatusDrafts(
-        Object.fromEntries(updated.project_statuses.map((s) => [s.key, s.label]))
-      );
-      setStageStatusDrafts(
-        Object.fromEntries(updated.stage_statuses.map((s) => [s.key, s.label]))
-      );
+      if (section === "project_statuses" || section === "stage_statuses") {
+        setProjectDrafts(
+          Object.fromEntries(updated.project_statuses.map((s) => [s.key, s.label]))
+        );
+        setStageDrafts(
+          Object.fromEntries(updated.stage_statuses.map((s) => [s.key, s.label]))
+        );
+        await refreshLabels();
+      }
       setOkMessage("Сохранено");
       window.setTimeout(() => setOkMessage(""), 2500);
+      return true;
     } catch {
       setError("Ошибка сети при сохранении");
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const addStage = () => {
-    if (!data || !newStageName.trim()) return;
-    const next = [
-      ...data.default_stages,
-      {
-        id: Math.max(0, ...data.default_stages.map((s) => s.id)) + 1,
-        name: newStageName.trim(),
-        order_index: data.default_stages.length,
-      },
-    ];
-    setNewStageName("");
-    saveSection("default_stages", next);
+  const q = search.trim().toLowerCase();
+
+  const stages = useMemo(() => {
+    const list = [...(data?.default_stages ?? [])].sort((a, b) => a.order_index - b.order_index);
+    if (!q) return list;
+    return list.filter((s) => s.name.toLowerCase().includes(q));
+  }, [data, q]);
+
+  const managers = useMemo(() => {
+    const list = data?.managers ?? [];
+    if (!q) return list;
+    return list.filter((m) => m.name.toLowerCase().includes(q));
+  }, [data, q]);
+
+  const types = useMemo(() => {
+    const list = data?.object_types ?? [];
+    if (!q) return list;
+    return list.filter((t) => t.name.toLowerCase().includes(q));
+  }, [data, q]);
+
+  const normalizeName = (v: string) => v.trim().replace(/\s+/g, " ");
+  const isDuplicate = (name: string, list: { id: number; name: string }[], exceptId?: number) => {
+    const n = name.toLowerCase();
+    return list.some((x) => x.id !== exceptId && x.name.trim().toLowerCase() === n);
   };
 
-  const updateStage = (id: number, name: string) => {
+  const persistStagesOrder = async (ordered: SettingDefaultStage[]) => {
+    const next = ordered.map((s, i) => ({ ...s, order_index: i }));
+    await saveSection("default_stages", next);
+  };
+
+  const moveStage = async (id: number, dir: -1 | 1) => {
     if (!data) return;
-    const next = data.default_stages.map((s) => (s.id === id ? { ...s, name } : s));
-    saveSection("default_stages", next);
-    setEditingStageId(null);
+    const ordered = [...data.default_stages].sort((a, b) => a.order_index - b.order_index);
+    const idx = ordered.findIndex((s) => s.id === id);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= ordered.length) return;
+    const copy = [...ordered];
+    [copy[idx], copy[j]] = [copy[j], copy[idx]];
+    await persistStagesOrder(copy);
   };
 
-  const removeStage = (id: number) => {
-    if (!data || !window.confirm("Удалить этап из списка?")) return;
-    const next = data.default_stages
-      .filter((s) => s.id !== id)
-      .map((s, i) => ({ ...s, order_index: i }));
-    saveSection("default_stages", next);
-  };
-
-  const addManager = () => {
-    if (!data || !newManagerName.trim()) return;
-    const next = [
-      ...data.managers,
-      { id: Math.max(0, ...data.managers.map((m) => m.id)) + 1, name: newManagerName.trim() },
-    ];
-    setNewManagerName("");
-    saveSection("managers", next);
-  };
-
-  const updateManager = (id: number, name: string) => {
-    if (!data) return;
-    const next = data.managers.map((m) => (m.id === id ? { ...m, name } : m));
-    saveSection("managers", next);
-    setEditingManagerId(null);
-  };
-
-  const removeManager = (id: number) => {
-    if (!data || !window.confirm("Удалить из списка?")) return;
-    saveSection(
-      "managers",
-      data.managers.filter((m) => m.id !== id)
-    );
-  };
-
-  const addObjectType = () => {
-    if (!data || !newObjectTypeName.trim()) return;
-    const next = [
-      ...(data.object_types || []),
-      {
-        id: Math.max(0, ...(data.object_types || []).map((o) => o.id)) + 1,
-        name: newObjectTypeName.trim(),
-      },
-    ];
-    setNewObjectTypeName("");
-    saveSection("object_types", next);
-  };
-
-  const updateObjectType = (id: number, name: string) => {
-    if (!data) return;
-    const next = (data.object_types || []).map((o) => (o.id === id ? { ...o, name } : o));
-    saveSection("object_types", next);
-    setEditingObjectTypeId(null);
-  };
-
-  const removeObjectType = (id: number) => {
-    if (!data || !window.confirm("Удалить тип из списка?")) return;
-    saveSection(
-      "object_types",
-      (data.object_types || []).filter((o) => o.id !== id)
-    );
-  };
-
-  const updateProjectStatus = (key: string, label: string) => {
-    if (!data) return;
-    const next = data.project_statuses.map((s) => (s.key === key ? { ...s, label } : s));
-    saveSection("project_statuses", next);
-  };
-
-  const updateStageStatus = (key: string, label: string) => {
-    if (!data) return;
-    const next = data.stage_statuses.map((s) => (s.key === key ? { ...s, label } : s));
-    saveSection("stage_statuses", next);
+  const onDropStage = async (targetId: number) => {
+    if (!data || dragId == null || dragId === targetId) {
+      setDragId(null);
+      return;
+    }
+    const ordered = [...data.default_stages].sort((a, b) => a.order_index - b.order_index);
+    const from = ordered.findIndex((s) => s.id === dragId);
+    const to = ordered.findIndex((s) => s.id === targetId);
+    if (from < 0 || to < 0) {
+      setDragId(null);
+      return;
+    }
+    const copy = [...ordered];
+    const [item] = copy.splice(from, 1);
+    copy.splice(to, 0, item);
+    setDragId(null);
+    await persistStagesOrder(copy);
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-ink-muted" />
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted" />
       </div>
     );
   }
@@ -239,327 +313,908 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center gap-4">
+    <div className="mx-auto w-full max-w-[1200px] space-y-6">
+      <div className="flex items-start gap-3">
         <Link
           href="/dashboard"
-          className="p-2 rounded-lg hover:bg-surface-muted text-ink-muted hover:text-ink"
+          className="mt-0.5 inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-white hover:text-ink"
+          aria-label="Назад"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold text-ink">Справочники</h1>
-          <p className="text-ink-muted mt-0.5">
-            Этапы, прорабы, статусы — варианты для выбора в объектах
+          <h1 className="text-[28px] font-semibold leading-9 tracking-tight text-ink">Справочники</h1>
+          <p className="mt-1 text-[15px] text-muted">
+            Настройте этапы, ответственных и варианты для карточек объектов
           </p>
         </div>
       </div>
 
       {(saving || okMessage || error) && (
         <div
-          className={
+          className={cn(
+            "rounded-[14px] border px-4 py-3 text-sm",
             error
-              ? "rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+              ? "border-red-200 bg-red-50 text-red-700"
               : okMessage
-                ? "rounded-[14px] border border-green/20 bg-green/5 px-4 py-3 text-sm font-medium text-green"
-                : "rounded-[14px] border border-line bg-surface px-4 py-3 text-sm text-muted inline-flex items-center gap-2"
-          }
-          role="status"
-          aria-live="polite"
-        >
-          {saving && (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Сохранение…
-            </>
+                ? "border-green/20 bg-green/5 font-medium text-green"
+                : "border-line bg-white text-muted"
           )}
-          {!saving && okMessage}
-          {!saving && error}
+          role="status"
+        >
+          {saving ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Сохранение…
+            </span>
+          ) : (
+            error || okMessage
+          )}
         </div>
       )}
 
-      {/* Always-visible toast near viewport bottom when editing long page */}
       {(saving || okMessage) && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 px-4 w-[min(92vw,360px)] pointer-events-none">
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[min(92vw,360px)] -translate-x-1/2">
           <div
-            className={
-              okMessage && !saving
-                ? "rounded-[12px] bg-green text-white px-4 py-3 text-sm font-medium text-center shadow-soft"
-                : "rounded-[12px] bg-ink text-white px-4 py-3 text-sm text-center shadow-soft inline-flex w-full items-center justify-center gap-2"
-            }
-            role="status"
-            aria-live="polite"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Сохранение…
-              </>
-            ) : (
-              okMessage
+            className={cn(
+              "rounded-[12px] px-4 py-3 text-center text-sm font-medium text-white shadow-soft",
+              okMessage && !saving ? "bg-green" : "bg-ink"
             )}
+          >
+            {saving ? "Сохранение…" : okMessage}
           </div>
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-ink">Этапы строительства</h2>
-          <p className="text-sm text-ink-muted">Список этапов, которые создаются у нового объекта</p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ul className="space-y-2">
-            {data.default_stages
-              .slice()
-              .sort((a, b) => a.order_index - b.order_index)
-              .map((s) => (
-                <li key={s.id} className="flex items-center gap-2 py-2 border-b border-border last:border-0">
+      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => switchTab(t.id)}
+            className={cn(
+              "relative shrink-0 rounded-[10px] px-4 py-2.5 text-sm font-medium transition-colors",
+              tab === t.id ? "text-green" : "text-muted hover:bg-white hover:text-ink"
+            )}
+          >
+            {t.label}
+            {tab === t.id && (
+              <span className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-orange" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* STAGES */}
+      {tab === "stages" && (
+        <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Этапы строительства</h2>
+              <p className="mt-1 text-sm text-muted">
+                {data.default_stages.length}{" "}
+                {data.default_stages.length === 1 ? "этап" : "этапов"} · этот список используется при
+                создании новых объектов. Этапы существующих объектов редактируются в самих проектах.
+              </p>
+            </div>
+            <Button
+              className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
+              onClick={() => {
+                setAddingStage(true);
+                setNewStageName("");
+              }}
+              disabled={saving}
+            >
+              <Plus className="mr-1 h-4 w-4" /> Добавить этап
+            </Button>
+          </div>
+
+          <div className="relative mt-4">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск этапа"
+              className="h-11 w-full rounded-[10px] border border-line bg-page pl-10 pr-3 text-sm text-ink placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-orange/30"
+            />
+          </div>
+
+          {addingStage && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-dashed border-orange/40 bg-cream/40 p-3">
+              <Input
+                ref={newStageRef}
+                value={newStageName}
+                onChange={(e) => setNewStageName(e.target.value)}
+                placeholder="Название этапа"
+                className="flex-1 min-w-[200px]"
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") {
+                    setAddingStage(false);
+                    setNewStageName("");
+                  }
+                  if (e.key === "Enter") {
+                    const name = normalizeName(newStageName);
+                    if (!name) return setError("Укажите название этапа");
+                    if (isDuplicate(name, data.default_stages)) return setError("Такой этап уже есть");
+                    const next = [
+                      ...data.default_stages,
+                      {
+                        id: Math.max(0, ...data.default_stages.map((s) => s.id)) + 1,
+                        name,
+                        order_index: data.default_stages.length,
+                      },
+                    ];
+                    const ok = await saveSection("default_stages", next);
+                    if (ok) {
+                      setAddingStage(false);
+                      setNewStageName("");
+                    }
+                  }
+                }}
+              />
+              <Button
+                disabled={saving}
+                onClick={async () => {
+                  const name = normalizeName(newStageName);
+                  if (!name) return setError("Укажите название этапа");
+                  if (isDuplicate(name, data.default_stages)) return setError("Такой этап уже есть");
+                  const next = [
+                    ...data.default_stages,
+                    {
+                      id: Math.max(0, ...data.default_stages.map((s) => s.id)) + 1,
+                      name,
+                      order_index: data.default_stages.length,
+                    },
+                  ];
+                  const ok = await saveSection("default_stages", next);
+                  if (ok) {
+                    setAddingStage(false);
+                    setNewStageName("");
+                  }
+                }}
+              >
+                Сохранить
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setAddingStage(false);
+                  setNewStageName("");
+                }}
+              >
+                Отмена
+              </Button>
+            </div>
+          )}
+
+          <ul className="mt-3 divide-y divide-line">
+            {stages.map((s) => {
+              const realIndex = data.default_stages
+                .slice()
+                .sort((a, b) => a.order_index - b.order_index)
+                .findIndex((x) => x.id === s.id);
+              return (
+                <li
+                  key={s.id}
+                  draggable={editingStageId !== s.id}
+                  onDragStart={() => setDragId(s.id)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => onDropStage(s.id)}
+                  className={cn(
+                    "flex min-h-[60px] items-center gap-2 py-2 transition-colors",
+                    "hover:bg-surface/80",
+                    dragId === s.id && "opacity-60"
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="inline-flex h-11 w-9 cursor-grab items-center justify-center rounded-[10px] text-muted active:cursor-grabbing"
+                    aria-label="Переместить"
+                    title="Перетащите"
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </button>
+                  <span className="w-7 shrink-0 text-center text-sm font-semibold text-muted">
+                    {realIndex + 1}
+                  </span>
                   {editingStageId === s.id ? (
-                    <>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                       <Input
                         value={editingStageName}
                         onChange={(e) => setEditingStageName(e.target.value)}
-                        className="flex-1"
-                        onKeyDown={(e) => e.key === "Enter" && updateStage(s.id, editingStageName)}
+                        className="min-w-[180px] flex-1"
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          if (e.key === "Escape") setEditingStageId(null);
+                          if (e.key === "Enter") {
+                            const name = normalizeName(editingStageName);
+                            if (!name) return setError("Название не может быть пустым");
+                            if (isDuplicate(name, data.default_stages, s.id))
+                              return setError("Такой этап уже есть");
+                            const next = data.default_stages.map((x) =>
+                              x.id === s.id ? { ...x, name } : x
+                            );
+                            const ok = await saveSection("default_stages", next);
+                            if (ok) setEditingStageId(null);
+                          }
+                        }}
                       />
-                      <Button size="sm" onClick={() => updateStage(s.id, editingStageName)} disabled={saving}>
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={async () => {
+                          const name = normalizeName(editingStageName);
+                          if (!name) return setError("Название не может быть пустым");
+                          if (isDuplicate(name, data.default_stages, s.id))
+                            return setError("Такой этап уже есть");
+                          const next = data.default_stages.map((x) =>
+                            x.id === s.id ? { ...x, name } : x
+                          );
+                          const ok = await saveSection("default_stages", next);
+                          if (ok) setEditingStageId(null);
+                        }}
+                      >
                         Сохранить
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setEditingStageId(null)}>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingStageId(null)}>
                         Отмена
                       </Button>
-                    </>
+                    </div>
                   ) : (
                     <>
-                      <span className="flex-1 font-medium">{s.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink">
+                        {s.name}
+                      </span>
                       <button
                         type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        aria-label="Выше"
+                        onClick={() => moveStage(s.id, -1)}
+                        disabled={saving || realIndex === 0}
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        aria-label="Ниже"
+                        onClick={() => moveStage(s.id, 1)}
+                        disabled={
+                          saving ||
+                          realIndex === data.default_stages.length - 1
+                        }
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        aria-label="Редактировать"
                         onClick={() => {
                           setEditingStageId(s.id);
                           setEditingStageName(s.name);
                         }}
-                        className="p-2 rounded-lg text-ink-muted hover:bg-surface-muted hover:text-ink"
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeStage(s.id)}
-                        className="p-2 rounded-lg text-ink-muted hover:bg-red-50 hover:text-red-600"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
+                        aria-label="Удалить"
+                        onClick={async () => {
+                          if (
+                            !window.confirm(
+                              `Удалить этап «${s.name}» из шаблона? На существующие объекты это не повлияет.`
+                            )
+                          )
+                            return;
+                          const next = data.default_stages
+                            .filter((x) => x.id !== s.id)
+                            .map((x, i) => ({ ...x, order_index: i }));
+                          await saveSection("default_stages", next);
+                        }}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </>
                   )}
                 </li>
-              ))}
+              );
+            })}
           </ul>
-          <div className="flex gap-2 pt-2">
-            <Input
-              value={newStageName}
-              onChange={(e) => setNewStageName(e.target.value)}
-              placeholder="Название этапа"
-              className="max-w-xs"
-              onKeyDown={(e) => e.key === "Enter" && addStage()}
-            />
-            <Button onClick={addStage} disabled={saving || !newStageName.trim()}>
-              <Plus className="w-4 h-4 mr-1" /> Добавить
+          {stages.length === 0 && (
+            <div className="py-10 text-center text-sm text-muted">
+              {q ? (
+                <>
+                  <p>Ничего не найдено</p>
+                  <Button variant="ghost" className="mt-2" onClick={() => setSearch("")}>
+                    Сбросить поиск
+                  </Button>
+                </>
+              ) : (
+                <p>Добавьте первый этап для шаблона новых объектов</p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* MANAGERS */}
+      {tab === "managers" && (
+        <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Ответственные</h2>
+              <p className="mt-1 text-sm text-muted">
+                {data.managers.length} в списке · для выбора на объектах и этапах. Это справочник имён,
+                а не приглашение в приложение.
+              </p>
+            </div>
+            <Button
+              className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
+              onClick={() => {
+                setAddingManager(true);
+                setNewManagerName("");
+              }}
+              disabled={saving}
+            >
+              <Plus className="mr-1 h-4 w-4" /> Добавить ответственного
             </Button>
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-ink">Прорабы / Ответственные</h2>
-          <p className="text-sm text-ink-muted">Список для выбора ответственного по объекту и этапам</p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ul className="space-y-2">
-            {data.managers.map((m) => (
-              <li key={m.id} className="flex items-center gap-2 py-2 border-b border-border last:border-0">
-                {editingManagerId === m.id ? (
-                  <>
-                    <Input
-                      value={editingManagerName}
-                      onChange={(e) => setEditingManagerName(e.target.value)}
-                      className="flex-1 max-w-xs"
-                      onKeyDown={(e) => e.key === "Enter" && updateManager(m.id, editingManagerName)}
-                    />
-                    <Button size="sm" onClick={() => updateManager(m.id, editingManagerName)} disabled={saving}>
-                      Сохранить
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setEditingManagerId(null)}>
-                      Отмена
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex-1 font-medium">{m.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingManagerId(m.id);
-                        setEditingManagerName(m.name);
-                      }}
-                      className="p-2 rounded-lg text-ink-muted hover:bg-surface-muted hover:text-ink"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeManager(m.id)}
-                      className="p-2 rounded-lg text-ink-muted hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-          <div className="flex gap-2 pt-2">
-            <Input
-              value={newManagerName}
-              onChange={(e) => setNewManagerName(e.target.value)}
-              placeholder="ФИО прораба"
-              className="max-w-xs"
-              onKeyDown={(e) => e.key === "Enter" && addManager()}
+          <div className="relative mt-4">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск по ФИО"
+              className="h-11 w-full rounded-[10px] border border-line bg-page pl-10 pr-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange/30"
             />
-            <Button onClick={addManager} disabled={saving || !newManagerName.trim()}>
-              <Plus className="w-4 h-4 mr-1" /> Добавить
-            </Button>
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-ink">Типы объектов</h2>
-          <p className="text-sm text-ink-muted">
-            Коттедж, ЖК, таунхаусы и др. — для выбора при создании объекта
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ul className="space-y-2">
-            {(data.object_types || []).map((o) => (
-              <li key={o.id} className="flex items-center gap-2 py-2 border-b border-border last:border-0">
-                {editingObjectTypeId === o.id ? (
-                  <>
-                    <Input
-                      value={editingObjectTypeName}
-                      onChange={(e) => setEditingObjectTypeName(e.target.value)}
-                      className="flex-1 max-w-xs"
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && updateObjectType(o.id, editingObjectTypeName)
-                      }
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => updateObjectType(o.id, editingObjectTypeName)}
-                      disabled={saving}
-                    >
-                      Сохранить
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setEditingObjectTypeId(null)}>
-                      Отмена
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex-1 font-medium">{o.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingObjectTypeId(o.id);
-                        setEditingObjectTypeName(o.name);
-                      }}
-                      className="p-2 rounded-lg text-ink-muted hover:bg-surface-muted hover:text-ink"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeObjectType(o.id)}
-                      className="p-2 rounded-lg text-ink-muted hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-          <div className="flex gap-2 pt-2">
-            <Input
-              value={newObjectTypeName}
-              onChange={(e) => setNewObjectTypeName(e.target.value)}
-              placeholder="Название типа"
-              className="max-w-xs"
-              onKeyDown={(e) => e.key === "Enter" && addObjectType()}
-            />
-            <Button onClick={addObjectType} disabled={saving || !newObjectTypeName.trim()}>
-              <Plus className="w-4 h-4 mr-1" /> Добавить
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-ink">Статусы объектов</h2>
-          <p className="text-sm text-ink-muted">Подписи к статусам проекта (ключ менять нельзя)</p>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-3">
-            {data.project_statuses.map((s) => (
-              <li key={s.key} className="flex items-center gap-4">
-                <span className="text-sm text-ink-muted w-32 shrink-0">{s.key}</span>
-                <Input
-                  value={projectStatusDrafts[s.key] ?? s.label}
-                  onChange={(e) =>
-                    setProjectStatusDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+          {addingManager && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-dashed border-orange/40 bg-cream/40 p-3">
+              <Input
+                ref={newManagerRef}
+                value={newManagerName}
+                onChange={(e) => setNewManagerName(e.target.value)}
+                placeholder="ФИО"
+                className="min-w-[200px] flex-1"
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") {
+                    setAddingManager(false);
+                    setNewManagerName("");
                   }
-                  onBlur={() => {
-                    const v = (projectStatusDrafts[s.key] ?? s.label).trim();
-                    if (v && v !== s.label) updateProjectStatus(s.key, v);
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                  className="max-w-xs"
-                  disabled={saving}
-                />
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold text-ink">Статусы этапов</h2>
-          <p className="text-sm text-ink-muted">Подписи к статусам этапа (ключ менять нельзя)</p>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-3">
-            {data.stage_statuses.map((s) => (
-              <li key={s.key} className="flex items-center gap-4">
-                <span className="text-sm text-ink-muted w-32 shrink-0">{s.key}</span>
-                <Input
-                  value={stageStatusDrafts[s.key] ?? s.label}
-                  onChange={(e) =>
-                    setStageStatusDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+                  if (e.key === "Enter") {
+                    const name = normalizeName(newManagerName);
+                    if (!name) return setError("Укажите ФИО");
+                    if (isDuplicate(name, data.managers)) return setError("Такой человек уже есть");
+                    const next = [
+                      ...data.managers,
+                      { id: Math.max(0, ...data.managers.map((m) => m.id)) + 1, name },
+                    ];
+                    const ok = await saveSection("managers", next);
+                    if (ok) {
+                      setAddingManager(false);
+                      setNewManagerName("");
+                    }
                   }
-                  onBlur={() => {
-                    const v = (stageStatusDrafts[s.key] ?? s.label).trim();
-                    if (v && v !== s.label) updateStageStatus(s.key, v);
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                  className="max-w-xs"
-                  disabled={saving}
-                />
-              </li>
-            ))}
+                }}
+              />
+              <Button
+                disabled={saving}
+                onClick={async () => {
+                  const name = normalizeName(newManagerName);
+                  if (!name) return setError("Укажите ФИО");
+                  if (isDuplicate(name, data.managers)) return setError("Такой человек уже есть");
+                  const next = [
+                    ...data.managers,
+                    { id: Math.max(0, ...data.managers.map((m) => m.id)) + 1, name },
+                  ];
+                  const ok = await saveSection("managers", next);
+                  if (ok) {
+                    setAddingManager(false);
+                    setNewManagerName("");
+                  }
+                }}
+              >
+                Сохранить
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setAddingManager(false);
+                  setNewManagerName("");
+                }}
+              >
+                Отмена
+              </Button>
+            </div>
+          )}
+
+          <ul className="mt-3 divide-y divide-line">
+            {managers.map((m) => {
+              const used = data.usage?.managers?.[m.name] ?? 0;
+              return (
+                <li key={m.id} className="flex min-h-[60px] items-center gap-3 py-2 hover:bg-surface/80">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green/10 text-sm font-semibold text-green">
+                    {initials(m.name)}
+                  </span>
+                  {editingManagerId === m.id ? (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <Input
+                        value={editingManagerName}
+                        onChange={(e) => setEditingManagerName(e.target.value)}
+                        className="min-w-[180px] flex-1"
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          if (e.key === "Escape") setEditingManagerId(null);
+                          if (e.key === "Enter") {
+                            const name = normalizeName(editingManagerName);
+                            if (!name) return setError("ФИО не может быть пустым");
+                            if (isDuplicate(name, data.managers, m.id))
+                              return setError("Такой человек уже есть");
+                            const next = data.managers.map((x) =>
+                              x.id === m.id ? { ...x, name } : x
+                            );
+                            const ok = await saveSection("managers", next);
+                            if (ok) setEditingManagerId(null);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={async () => {
+                          const name = normalizeName(editingManagerName);
+                          if (!name) return setError("ФИО не может быть пустым");
+                          if (isDuplicate(name, data.managers, m.id))
+                            return setError("Такой человек уже есть");
+                          const next = data.managers.map((x) =>
+                            x.id === m.id ? { ...x, name } : x
+                          );
+                          const ok = await saveSection("managers", next);
+                          if (ok) setEditingManagerId(null);
+                        }}
+                      >
+                        Сохранить
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingManagerId(null)}>
+                        Отмена
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[15px] font-medium text-ink">{m.name}</p>
+                        {used > 0 && (
+                          <p className="text-caption text-muted">Используется в объектах/этапах: {used}</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+                        aria-label="Редактировать"
+                        onClick={() => {
+                          setEditingManagerId(m.id);
+                          setEditingManagerName(m.name);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
+                        aria-label="Удалить"
+                        onClick={async () => {
+                          if (used > 0) {
+                            window.alert(
+                              `«${m.name}» уже указан в объектах или этапах (${used}). Удаление из справочника не сотрёт историю — записи в проектах останутся со старым ФИО. Чтобы убрать из списка выбора — подтвердите удаление.`
+                            );
+                          }
+                          if (!window.confirm(`Удалить «${m.name}» из справочника?`)) return;
+                          await saveSection(
+                            "managers",
+                            data.managers.filter((x) => x.id !== m.id)
+                          );
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
-        </CardContent>
-      </Card>
+
+          {managers.length === 0 && (
+            <div className="py-10 text-center">
+              {q ? (
+                <>
+                  <p className="text-sm text-muted">Ничего не найдено</p>
+                  <Button variant="ghost" className="mt-2" onClick={() => setSearch("")}>
+                    Сбросить поиск
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <User className="mx-auto h-8 w-8 text-muted" />
+                  <p className="mt-3 text-sm text-muted">
+                    Добавьте ответственного, чтобы назначать его на объекты и этапы
+                  </p>
+                  <Button
+                    className="mt-4 bg-orange hover:bg-orange/90 text-white border-0"
+                    onClick={() => {
+                      setAddingManager(true);
+                      setNewManagerName("");
+                    }}
+                  >
+                    <Plus className="mr-1 h-4 w-4" /> Добавить ответственного
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* TYPES */}
+      {tab === "types" && (
+        <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Типы объектов</h2>
+              <p className="mt-1 text-sm text-muted">
+                {data.object_types.length}{" "}
+                {data.object_types.length === 1 ? "тип" : "типов"} · для выбора при создании карточки
+              </p>
+            </div>
+            <Button
+              className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
+              onClick={() => {
+                setAddingType(true);
+                setNewTypeName("");
+              }}
+            >
+              <Plus className="mr-1 h-4 w-4" /> Добавить тип
+            </Button>
+          </div>
+
+          <div className="relative mt-4">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск типа"
+              className="h-11 w-full rounded-[10px] border border-line bg-page pl-10 pr-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange/30"
+            />
+          </div>
+
+          {addingType && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-dashed border-orange/40 bg-cream/40 p-3">
+              <Input
+                ref={newTypeRef}
+                value={newTypeName}
+                onChange={(e) => setNewTypeName(e.target.value)}
+                placeholder="Название типа"
+                className="min-w-[200px] flex-1"
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") {
+                    setAddingType(false);
+                    setNewTypeName("");
+                  }
+                  if (e.key === "Enter") {
+                    const name = normalizeName(newTypeName);
+                    if (!name) return setError("Укажите название");
+                    if (isDuplicate(name, data.object_types)) return setError("Такой тип уже есть");
+                    const next = [
+                      ...(data.object_types || []),
+                      {
+                        id: Math.max(0, ...(data.object_types || []).map((o) => o.id)) + 1,
+                        name,
+                      },
+                    ];
+                    const ok = await saveSection("object_types", next);
+                    if (ok) {
+                      setAddingType(false);
+                      setNewTypeName("");
+                    }
+                  }
+                }}
+              />
+              <Button
+                disabled={saving}
+                onClick={async () => {
+                  const name = normalizeName(newTypeName);
+                  if (!name) return setError("Укажите название");
+                  if (isDuplicate(name, data.object_types)) return setError("Такой тип уже есть");
+                  const next = [
+                    ...(data.object_types || []),
+                    {
+                      id: Math.max(0, ...(data.object_types || []).map((o) => o.id)) + 1,
+                      name,
+                    },
+                  ];
+                  const ok = await saveSection("object_types", next);
+                  if (ok) {
+                    setAddingType(false);
+                    setNewTypeName("");
+                  }
+                }}
+              >
+                Сохранить
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setAddingType(false);
+                  setNewTypeName("");
+                }}
+              >
+                Отмена
+              </Button>
+            </div>
+          )}
+
+          <ul className="mt-3 divide-y divide-line">
+            {types.map((t) => {
+              const used = data.usage?.object_types?.[t.name] ?? 0;
+              return (
+                <li key={t.id} className="flex min-h-[56px] items-center gap-3 py-2 hover:bg-surface/80">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-surface text-green">
+                    <Building2 className="h-4 w-4" />
+                  </span>
+                  {editingTypeId === t.id ? (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <Input
+                        value={editingTypeName}
+                        onChange={(e) => setEditingTypeName(e.target.value)}
+                        className="min-w-[180px] flex-1"
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          if (e.key === "Escape") setEditingTypeId(null);
+                          if (e.key === "Enter") {
+                            const name = normalizeName(editingTypeName);
+                            if (!name) return setError("Название не может быть пустым");
+                            if (isDuplicate(name, data.object_types, t.id))
+                              return setError("Такой тип уже есть");
+                            const next = data.object_types.map((x) =>
+                              x.id === t.id ? { ...x, name } : x
+                            );
+                            const ok = await saveSection("object_types", next);
+                            if (ok) setEditingTypeId(null);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={async () => {
+                          const name = normalizeName(editingTypeName);
+                          if (!name) return setError("Название не может быть пустым");
+                          if (isDuplicate(name, data.object_types, t.id))
+                            return setError("Такой тип уже есть");
+                          const next = data.object_types.map((x) =>
+                            x.id === t.id ? { ...x, name } : x
+                          );
+                          const ok = await saveSection("object_types", next);
+                          if (ok) setEditingTypeId(null);
+                        }}
+                      >
+                        Сохранить
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingTypeId(null)}>
+                        Отмена
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[15px] font-medium text-ink">{t.name}</p>
+                        {used > 0 && (
+                          <p className="text-caption text-muted">Используется в объектах: {used}</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-surface"
+                        aria-label="Редактировать"
+                        onClick={() => {
+                          setEditingTypeId(t.id);
+                          setEditingTypeName(t.name);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:bg-red-50 hover:text-red-600"
+                        aria-label="Удалить"
+                        onClick={async () => {
+                          if (used > 0) {
+                            window.alert(
+                              `Тип «${t.name}» уже указан у ${used} объектов. Удаление из справочника не изменит карточки — там останется старое значение.`
+                            );
+                          }
+                          if (!window.confirm(`Удалить тип «${t.name}»?`)) return;
+                          await saveSection(
+                            "object_types",
+                            data.object_types.filter((x) => x.id !== t.id)
+                          );
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {types.length === 0 && (
+            <div className="py-10 text-center text-sm text-muted">
+              {q ? (
+                <>
+                  <p>Ничего не найдено</p>
+                  <Button variant="ghost" className="mt-2" onClick={() => setSearch("")}>
+                    Сбросить поиск
+                  </Button>
+                </>
+              ) : (
+                <p>Добавьте тип объекта</p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* STATUSES */}
+      {tab === "statuses" && (
+        <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+              <h2 className="text-lg font-semibold text-ink">Статусы объектов</h2>
+              <p className="mt-1 text-sm text-muted">Подписи для карточек и фильтров</p>
+              <ul className="mt-4 space-y-3">
+                {data.project_statuses.map((s) => {
+                  const label = projectDrafts[s.key] ?? s.label;
+                  return (
+                    <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        value={label}
+                        onChange={(e) =>
+                          setProjectDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+                        }
+                        className="flex-1"
+                        aria-label={`Подпись статуса объекта`}
+                      />
+                      <span
+                        className={cn(
+                          "inline-flex h-9 min-w-[120px] items-center justify-center gap-1 rounded-full px-3 text-caption font-medium",
+                          PROJECT_BADGE[s.key] || "bg-surface text-ink"
+                        )}
+                      >
+                        {s.key === "completed" && <Check className="h-3.5 w-3.5" />}
+                        {label || "—"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+
+            <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+              <h2 className="text-lg font-semibold text-ink">Статусы этапов</h2>
+              <p className="mt-1 text-sm text-muted">Подписи в списке этапов строительства</p>
+              <ul className="mt-4 space-y-3">
+                {data.stage_statuses.map((s) => {
+                  const label = stageDrafts[s.key] ?? s.label;
+                  return (
+                    <li key={s.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        value={label}
+                        onChange={(e) =>
+                          setStageDrafts((prev) => ({ ...prev, [s.key]: e.target.value }))
+                        }
+                        className="flex-1"
+                        aria-label={`Подпись статуса этапа`}
+                      />
+                      <span
+                        className={cn(
+                          "inline-flex h-9 min-w-[120px] items-center justify-center gap-1 rounded-full px-3 text-caption font-medium",
+                          STAGE_BADGE[s.key] || "bg-surface text-ink"
+                        )}
+                      >
+                        {s.key === "completed" && <Check className="h-3.5 w-3.5" />}
+                        {label || "—"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          </div>
+
+          {statusesDirty && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                disabled={saving}
+                className="bg-orange hover:bg-orange/90 text-white border-0"
+                onClick={async () => {
+                  for (const s of data.project_statuses) {
+                    if (!normalizeName(projectDrafts[s.key] ?? "")) {
+                      setError("Подпись статуса объекта не может быть пустой");
+                      return;
+                    }
+                  }
+                  for (const s of data.stage_statuses) {
+                    if (!normalizeName(stageDrafts[s.key] ?? "")) {
+                      setError("Подпись статуса этапа не может быть пустой");
+                      return;
+                    }
+                  }
+                  setSaving(true);
+                  setError("");
+                  setOkMessage("");
+                  try {
+                    const res = await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        project_statuses: data.project_statuses.map((s) => ({
+                          key: s.key,
+                          label: normalizeName(projectDrafts[s.key] ?? s.label),
+                        })),
+                        stage_statuses: data.stage_statuses.map((s) => ({
+                          key: s.key,
+                          label: normalizeName(stageDrafts[s.key] ?? s.label),
+                        })),
+                      }),
+                    });
+                    const updated = await res.json();
+                    if (!res.ok || !isSettingsData(updated)) {
+                      setError(updated?.error || "Не удалось сохранить статусы");
+                      return;
+                    }
+                    setData(updated);
+                    setProjectDrafts(
+                      Object.fromEntries(updated.project_statuses.map((s) => [s.key, s.label]))
+                    );
+                    setStageDrafts(
+                      Object.fromEntries(updated.stage_statuses.map((s) => [s.key, s.label]))
+                    );
+                    await refreshLabels();
+                    setOkMessage("Сохранено");
+                    window.setTimeout(() => setOkMessage(""), 2500);
+                  } catch {
+                    setError("Ошибка сети при сохранении");
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Сохранить изменения
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  setProjectDrafts(
+                    Object.fromEntries(data.project_statuses.map((s) => [s.key, s.label]))
+                  );
+                  setStageDrafts(
+                    Object.fromEntries(data.stage_statuses.map((s) => [s.key, s.label]))
+                  );
+                  setError("");
+                }}
+              >
+                <X className="mr-1 h-4 w-4" /> Отменить
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

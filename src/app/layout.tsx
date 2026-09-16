@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Layout } from "@/components/layout/Layout";
 import { AuthProvider } from "@/components/auth/AuthProvider";
+import { StatusLabelsProvider } from "@/hooks/useStatusLabels";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -24,7 +25,9 @@ export default function RootLayout({
     <html lang="ru">
       <body className={`${inter.variable} font-sans`}>
         <AuthProvider>
-          <Layout>{children}</Layout>
+          <StatusLabelsProvider>
+            <Layout>{children}</Layout>
+          </StatusLabelsProvider>
         </AuthProvider>
       </body>
     </html>

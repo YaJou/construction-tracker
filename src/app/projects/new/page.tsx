@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { PROJECT_STATUS_LABELS } from "@/lib/constants";
+import { useStatusLabels } from "@/hooks/useStatusLabels";
 import {
   formatThousands,
   parseFormattedNumber,
@@ -91,6 +91,7 @@ function fieldClass(invalid?: boolean) {
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { project: statusLabels } = useStatusLabels();
   const nameRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [settings, setSettings] = useState<{
@@ -635,7 +636,7 @@ export default function NewProjectPage() {
                 onChange={(e) => setField("status", e.target.value)}
                 aria-label="Статус"
               >
-                {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
+                {Object.entries(statusLabels).map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>

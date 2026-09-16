@@ -4,8 +4,12 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS } from "@/lib/constants";
 import { cn } from "@/utils/cn";
+import {
+  projectStatusLabel,
+  stageStatusLabel,
+  useStatusLabels,
+} from "@/hooks/useStatusLabels";
 
 interface ReportPhoto {
   id: number;
@@ -53,6 +57,7 @@ type ReportMode = "full" | "client";
 export default function ReportPrintPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const { project: projectLabels, stage: stageLabels } = useStatusLabels();
   const id = Number(params.id);
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -165,7 +170,7 @@ export default function ReportPrintPage() {
             </tr>
             <tr>
               <td className="py-1 text-muted">Статус</td>
-              <td>{PROJECT_STATUS_LABELS[project.status] || project.status}</td>
+              <td>{projectStatusLabel(projectLabels, project.status)}</td>
             </tr>
             <tr>
               <td className="py-1 text-muted">Ответственный</td>
@@ -212,7 +217,7 @@ export default function ReportPrintPage() {
             {stages.map((s) => (
               <tr key={s.id} className="border-b border-line/60">
                 <td className="py-2">{s.name}</td>
-                <td className="py-2">{STAGE_STATUS_LABELS[s.status] || s.status}</td>
+                <td className="py-2">{stageStatusLabel(stageLabels, s.status)}</td>
                 {!isClient && (
                   <td className="py-2 text-muted">
                     {s.start_date
