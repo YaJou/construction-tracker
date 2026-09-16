@@ -10,6 +10,7 @@ import {
   stageStatusLabel,
   useStatusLabels,
 } from "@/hooks/useStatusLabels";
+import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
 
 interface ReportPhoto {
   id: number;
@@ -64,6 +65,8 @@ export default function ReportPrintPage() {
   const isPrint = searchParams.get("print") === "1";
   const initialMode = (searchParams.get("mode") === "client" ? "client" : "full") as ReportMode;
   const [mode, setMode] = useState<ReportMode>(initialMode);
+  const [savingPdf, setSavingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -74,11 +77,25 @@ export default function ReportPrintPage() {
   }, [id]);
 
   useEffect(() => {
-    if (isPrint && data) {
-      const t = setTimeout(() => window.print(), 600);
-      return () => clearTimeout(t);
-    }
+    if (!isPrint || !data) return;
+    const isCoarse = window.matchMedia("(pointer: coarse)").matches;
+    if (isCoarse) return;
+    const t = setTimeout(() => window.print(), 600);
+    return () => clearTimeout(t);
   }, [isPrint, data, mode]);
+
+  const handleDownloadPdf = async () => {
+    if (!data || savingPdf) return;
+    setSavingPdf(true);
+    setPdfError("");
+    try {
+      await downloadProjectReportPdf(data, mode);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : "Ошибка создания PDF");
+    } finally {
+      setSavingPdf(false);
+    }
+  };
 
   const stageNameById = useMemo(() => {
     const map = new Map<number, string>();
@@ -136,14 +153,23 @@ export default function ReportPrintPage() {
           ))}
           <button
             type="button"
-            onClick={() => window.print()}
-            className="ml-auto h-[42px] px-4 rounded-[10px] bg-orange text-white text-sm font-medium"
+            onClick={() => void handleDownloadPdf()}
+            disabled={savingPdf}
+            className="ml-auto h-[42px] px-4 rounded-[10px] bg-orange text-white text-sm font-medium disabled:opacity-60"
           >
-            Печать / PDF
+            {savingPdf ? "Создаю PDF…" : "Скачать PDF"}
+          </button>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="h-[42px] px-4 rounded-[10px] border border-line bg-white text-ink text-sm font-medium hover:bg-surface"
+          >
+            Печать
           </button>
         </div>
+        {pdfError && <p className="text-sm text-red-600">{pdfError}</p>}
         <p className="text-caption text-muted">
-          Предпросмотр. Нажмите «Печать / PDF», чтобы сохранить через диалог браузера.
+          На телефоне откроется сохранение или «Поделиться» файлом PDF.
         </p>
       </div>
 

@@ -65,5 +65,9 @@ body {
   body {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+    background: white !important;
+  }
+  main {
+    padding-top: 0 !important;
   }
 }

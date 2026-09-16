@@ -15,6 +15,7 @@ import {
 import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { EXPENSE_CATEGORIES } from "@/lib/constants";
+import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
 import {
   projectStatusLabel,
   stageStatusLabel,
@@ -174,6 +175,8 @@ export default function ProjectPage() {
   const [substepBusyId, setSubstepBusyId] = useState<number | null>(null);
   const [substepError, setSubstepError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportPdfError, setExportPdfError] = useState("");
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [stagesInitialized, setStagesInitialized] = useState(false);
   const [overviewPhotos, setOverviewPhotos] = useState<OverviewPhoto[]>([]);
@@ -560,10 +563,23 @@ export default function ProjectPage() {
     }
   };
 
-  const handleExportReport = (mode: "full" | "client" = "full") => {
-    if (!project) return;
-    const q = mode === "client" ? "print=1&mode=client" : "print=1&mode=full";
-    window.open(`/reports/${project.id}?${q}`, "_blank");
+  const handleExportReport = async (mode: "full" | "client" = "full") => {
+    if (!project || exportingPdf) return;
+    setExportingPdf(true);
+    setExportPdfError("");
+    try {
+      const res = await fetch(`/api/reports/${project.id}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Не удалось сформировать отчёт");
+      }
+      const data = await res.json();
+      await downloadProjectReportPdf(data, mode);
+    } catch (err) {
+      setExportPdfError(err instanceof Error ? err.message : "Ошибка создания PDF");
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   const startEditingCard = () => {
@@ -1182,9 +1198,13 @@ export default function ProjectPage() {
               <Pencil className="mr-1.5 h-4 w-4" />
               Редактировать
             </Button>
-            <Button size="sm" onClick={() => handleExportReport("full")} variant="secondary">
-              <FileText className="mr-1.5 h-4 w-4" />
-              Отчёт PDF
+            <Button size="sm" onClick={() => void handleExportReport("full")} variant="secondary" disabled={exportingPdf}>
+              {exportingPdf ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-1.5 h-4 w-4" />
+              )}
+              {exportingPdf ? "PDF…" : "Отчёт PDF"}
             </Button>
             <div className="relative">
               <button
@@ -1243,10 +1263,15 @@ export default function ProjectPage() {
             size="sm"
             variant="secondary"
             className="min-h-10 flex-1"
-            onClick={() => handleExportReport("full")}
+            disabled={exportingPdf}
+            onClick={() => void handleExportReport("full")}
           >
-            <FileText className="mr-1.5 h-4 w-4" />
-            PDF
+            {exportingPdf ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <FileText className="mr-1.5 h-4 w-4" />
+            )}
+            {exportingPdf ? "…" : "PDF"}
           </Button>
           <div className="relative shrink-0">
             <button
@@ -1286,6 +1311,12 @@ export default function ProjectPage() {
           </div>
         </div>
       </header>
+
+      {exportPdfError && (
+        <div className="rounded-[12px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {exportPdfError}
+        </div>
+      )}
 
       {/* Tabs — full-width grid on phone so nothing is clipped */}
       <div className="grid grid-cols-5 gap-1 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
@@ -1692,36 +1723,43 @@ export default function ProjectPage() {
 
           {/* Quick actions */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              {
-                label: "Добавить фото",
-                icon: Camera,
-                onClick: () => setActiveTab("photos"),
-              },
-              {
-                label: "Добавить расход",
-                icon: DollarSign,
-                onClick: () => setActiveTab("expenses"),
-              },
-              {
-                label: "Комментарий",
-                icon: MessageSquare,
-                onClick: openCommentOnCurrent,
-              },
-              {
-                label: "Отчёт PDF",
-                icon: FileText,
-                onClick: () => handleExportReport("full"),
-              },
-            ].map(({ label, icon: Icon, onClick }) => (
+            {(
+              [
+                {
+                  id: "photo",
+                  label: "Добавить фото",
+                  icon: Camera,
+                  onClick: () => setActiveTab("photos"),
+                },
+                {
+                  id: "expense",
+                  label: "Добавить расход",
+                  icon: DollarSign,
+                  onClick: () => setActiveTab("expenses"),
+                },
+                {
+                  id: "comment",
+                  label: "Комментарий",
+                  icon: MessageSquare,
+                  onClick: openCommentOnCurrent,
+                },
+                {
+                  id: "pdf",
+                  label: exportingPdf ? "Создаю PDF…" : "Отчёт PDF",
+                  icon: exportingPdf ? Loader2 : FileText,
+                  onClick: () => void handleExportReport("full"),
+                },
+              ] as const
+            ).map(({ id, label, icon: Icon, onClick }) => (
               <button
-                key={label}
+                key={id}
                 type="button"
                 onClick={onClick}
-                className="flex items-center gap-3 rounded-[14px] border border-line bg-white px-4 py-3.5 text-left hover:bg-surface transition-colors shadow-[0_4px_16px_rgba(23,63,52,0.04)]"
+                disabled={id === "pdf" && exportingPdf}
+                className="flex items-center gap-3 rounded-[14px] border border-line bg-white px-4 py-3.5 text-left hover:bg-surface transition-colors shadow-[0_4px_16px_rgba(23,63,52,0.04)] disabled:opacity-60"
               >
                 <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-cream text-orange shrink-0">
-                  <Icon className="w-4 h-4" />
+                  <Icon className={cn("h-4 w-4", id === "pdf" && exportingPdf && "animate-spin")} />
                 </span>
                 <span className="text-sm font-medium text-ink">{label}</span>
               </button>

@@ -142,11 +142,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex bg-surface text-ink">
-      <aside className="hidden min-[901px]:flex w-[232px] min-h-screen border-r border-line bg-white shrink-0 flex-col sticky top-0 h-screen">
+      <aside className="no-print hidden min-[901px]:flex w-[232px] min-h-screen border-r border-line bg-white shrink-0 flex-col sticky top-0 h-screen">
         <SidebarNav pathname={pathname} />
       </aside>
 
-      <div className="min-[901px]:hidden fixed top-0 inset-x-0 z-40 h-14 border-b border-line bg-white flex items-center gap-3 px-4">
+      <div className="no-print min-[901px]:hidden fixed top-0 inset-x-0 z-40 h-14 border-b border-line bg-white flex items-center gap-3 px-4">
         <button
           type="button"
           className="inline-flex items-center justify-center rounded-[10px] border border-line p-2 text-ink min-h-[42px] min-w-[42px] hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-orange/40"
