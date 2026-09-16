@@ -38,6 +38,9 @@ alter table public.stage_substeps
 alter table public.stage_substeps
   add column if not exists on_review boolean not null default false;
 
+alter table public.stage_substeps disable row level security;
+grant select, insert, update, delete on public.stage_substeps to anon, authenticated;
+
 do $$
 declare
   r record;

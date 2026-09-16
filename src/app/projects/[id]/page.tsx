@@ -162,6 +162,7 @@ export default function ProjectPage() {
   const [skipReason, setSkipReason] = useState("");
   const [skipSaving, setSkipSaving] = useState(false);
   const [substepBusyId, setSubstepBusyId] = useState<number | null>(null);
+  const [substepError, setSubstepError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [stagesInitialized, setStagesInitialized] = useState(false);
@@ -342,11 +343,15 @@ export default function ProjectPage() {
   const toggleSubstep = async (substepId: number, completed: boolean) => {
     if (!project || substepBusyId === substepId) return;
     setSubstepBusyId(substepId);
+    setSubstepError("");
+    const prev = project.stages
+      .flatMap((s) => s.substeps ?? [])
+      .find((s) => s.id === substepId);
     patchLocalSubstep(substepId, {
       completed,
-      not_required: false,
-      on_review: false,
-      skip_reason: null,
+      ...(completed
+        ? { not_required: false, on_review: false, skip_reason: null }
+        : {}),
     });
     try {
       const res = await fetch(`/api/projects/${project.id}/stages/substeps`, {
@@ -354,11 +359,30 @@ export default function ProjectPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ substepId, completed }),
       });
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        await refetch();
+        if (prev) {
+          patchLocalSubstep(substepId, {
+            completed: prev.completed,
+            not_required: prev.not_required,
+            on_review: prev.on_review,
+            skip_reason: prev.skip_reason ?? null,
+          });
+        } else {
+          await refetch();
+        }
+        setSubstepError(json?.error || "Не удалось сохранить отметку подэтапа");
       }
     } catch {
-      await refetch();
+      if (prev) {
+        patchLocalSubstep(substepId, {
+          completed: prev.completed,
+          not_required: prev.not_required,
+          on_review: prev.on_review,
+          skip_reason: prev.skip_reason ?? null,
+        });
+      }
+      setSubstepError("Ошибка сети при сохранении подэтапа");
     } finally {
       setSubstepBusyId(null);
     }
@@ -696,6 +720,14 @@ export default function ProjectPage() {
         <p className="text-sm text-muted">
           Готово {completedStagesCount} из {totalStages} этапов
         </p>
+        {substepError && (
+          <p
+            className="mt-2 max-w-xl rounded-[12px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+            role="alert"
+          >
+            {substepError}
+          </p>
+        )}
       </div>
 
       {project.stages.length === 0 ? (
