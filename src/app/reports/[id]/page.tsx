@@ -169,7 +169,7 @@ export default function ReportPrintPage() {
         </div>
         {pdfError && <p className="text-sm text-red-600">{pdfError}</p>}
         <p className="text-caption text-muted">
-          На телефоне откроется сохранение или «Поделиться» файлом PDF.
+          Файл PDF скачается на устройство. На iPhone может открыться в новой вкладке — сохраните через «Поделиться».
         </p>
       </div>
 

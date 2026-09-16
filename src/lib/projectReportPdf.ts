@@ -39,10 +39,11 @@ let fontsReady: Promise<void> | null = null;
 
 function arrayBufferToBinaryString(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  const chunk = 0x8000;
+  const chunk = 8192;
   let binary = "";
   for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode.apply(null, Array.from(slice) as unknown as number[]);
   }
   return binary;
 }
@@ -97,42 +98,27 @@ function safeFilename(name: string) {
   return cleaned || "otchet";
 }
 
-async function saveBlob(blob: Blob, filename: string) {
-  const file = new File([blob], filename, { type: "application/pdf" });
-  const nav = navigator as Navigator & {
-    canShare?: (data?: ShareData) => boolean;
-    share?: (data: ShareData) => Promise<void>;
-  };
+function triggerDownload(url: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
-  if (nav.canShare?.({ files: [file] })) {
-    try {
-      await nav.share({ files: [file], title: filename });
-      return;
-    } catch (err) {
-      if ((err as Error)?.name === "AbortError") return;
-    }
-  }
-
+/** Always save as a file. Web Share is skipped — on Windows it opens and immediately closes. */
+function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
   try {
-    if (isIOS) {
-      // iOS often ignores <a download>; open PDF in a tab so user can Share → Save to Files
-      const opened = window.open(url, "_blank");
-      if (!opened) {
-        window.location.href = url;
-      }
-      return;
-    }
+    triggerDownload(url, filename);
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    // iOS Safari often ignores download= — also open the PDF so user can save it.
+    if (/iPad|iPhone|iPod/i.test(navigator.userAgent || "")) {
+      window.open(url, "_blank");
+    }
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 120_000);
   }
@@ -351,6 +337,12 @@ export async function downloadProjectReportPdf(
   );
 
   const filename = `StroiUchet_${safeFilename(data.project.name)}.pdf`;
-  const blob = doc.output("blob");
-  await saveBlob(blob, filename);
+
+  // Built-in save is the most reliable download on desktop browsers.
+  if (!/iPad|iPhone|iPod/i.test(navigator.userAgent || "")) {
+    doc.save(filename);
+    return;
+  }
+
+  saveBlob(doc.output("blob"), filename);
 }
