@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { DEFAULT_STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
+import { addProjectMember, getAccessibleProjectIds } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     const foremanFilter = searchParams.get("foreman") ?? "";
     const list = searchParams.get("list") ?? "active"; // active | completed | archived
 
-    // 1. Все проекты
+    // 1. Все проекты (с фильтром доступа для не-руководителей)
     const { data: allProjectsRaw, error: projectsError } = await supabase
       .from("projects")
       .select("*");
@@ -36,7 +37,13 @@ export async function GET(request: Request) {
       );
     }
 
-    let allProjects = [...allProjectsRaw];
+    const accessible = await getAccessibleProjectIds(auth.ctx);
+    const scopedProjects =
+      accessible === "all"
+        ? allProjectsRaw
+        : allProjectsRaw.filter((p) => accessible.includes(p.id));
+
+    let allProjects = [...scopedProjects];
 
     // Фильтрация по list
     if (list === "active") {
@@ -51,8 +58,8 @@ export async function GET(request: Request) {
       allProjects = allProjects.filter((p) => !!p.archived);
     }
 
-    // Для фильтров нужно посмотреть во все проекты (включая завершённые/архив)
-    const allProjectsForOptions = allProjectsRaw;
+    // Для фильтров — только доступные объекты
+    const allProjectsForOptions = scopedProjects;
 
     // Настройки менеджеров
     const { data: settingManagers, error: managersError } = await supabase
@@ -344,6 +351,19 @@ export async function POST(request: Request) {
     }
 
     const projectId = inserted.id as number;
+
+    // Creator becomes project member
+    try {
+      const memberRole =
+        auth.ctx.profile.role === "owner"
+          ? "owner"
+          : auth.ctx.profile.role === "foreman"
+            ? "foreman"
+            : "manager";
+      await addProjectMember(auth.ctx, projectId, auth.ctx.user.id, memberRole);
+    } catch (e) {
+      console.warn("project_members insert:", e);
+    }
 
     // 2. Получаем настройки этапов (setting_default_stages) или DEFAULT_STAGES
     const { data: settingsStages, error: settingsStagesError } =

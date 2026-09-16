@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { requireWriteAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export async function POST(request: Request) {
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const stageId = Number(body.stageId);
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -61,6 +64,8 @@ export async function PATCH(request: Request) {
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const substepId = Number(body.substepId);
     if (!substepId) return NextResponse.json({ error: "Укажите substepId" }, { status: 400 });
@@ -90,6 +95,8 @@ export async function DELETE(request: Request) {
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const substepId = Number(body.substepId);
     if (!substepId) return NextResponse.json({ error: "Укажите substepId" }, { status: 400 });

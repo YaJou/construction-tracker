@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,8 @@ export async function GET(
   if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const { data, error } = await supabase
       .from("stages")
       .select("*")
@@ -74,6 +77,8 @@ export async function PATCH(request: Request) {
     if (!stageId || !projectId) {
       return NextResponse.json({ error: "stageId и projectId обязательны" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, Number(projectId));
+    if (!access.ok) return access.response;
 
     const allowed = ["name", "status", "start_date", "end_date", "responsible", "comment", "progress_percent"];
     const toUpdate: Record<string, unknown> = {};

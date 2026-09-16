@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,8 @@ export async function GET(
   if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const [{ data: expenses, error: expensesError }, { data: project }] =
       await Promise.all([
         supabase
@@ -60,6 +63,8 @@ export async function POST(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const { date, category, description, amount, added_by } = body;
     if (!date || !category || amount == null) {
@@ -110,6 +115,8 @@ export async function PATCH(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const expenseId = Number(body.expenseId);
     if (!expenseId) {
@@ -172,6 +179,8 @@ export async function DELETE(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const expenseId = Number(body.expenseId);
     if (!expenseId) {

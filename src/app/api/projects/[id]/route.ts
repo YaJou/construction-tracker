@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,9 @@ export async function GET(
   try {
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
+
+    const access = await assertProjectAccess(auth.ctx, id);
+    if (!access.ok) return access.response;
 
     const { data: project, error: projectError } = await supabase
       .from("projects")
@@ -102,6 +106,9 @@ export async function PATCH(
   try {
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
+
+    const access = await assertProjectAccess(auth.ctx, id);
+    if (!access.ok) return access.response;
 
     const body = await request.json();
     const fields = [

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ export async function GET(
   if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("*")

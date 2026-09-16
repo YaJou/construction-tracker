@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
+import { assertProjectAccess } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,6 +39,8 @@ export async function GET(
   if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const { data, error } = await supabase
       .from("photos")
       .select("*")
@@ -62,6 +65,8 @@ export async function POST(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const thumbFile = formData.get("thumbnail") as File | null;
@@ -192,6 +197,8 @@ export async function PATCH(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const photoId = Number(body.photoId);
     if (!photoId) {
@@ -241,6 +248,8 @@ export async function DELETE(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
+    const access = await assertProjectAccess(auth.ctx, projectId);
+    if (!access.ok) return access.response;
     const body = await request.json();
     const photoId = Number(body.photoId);
     if (!photoId) {

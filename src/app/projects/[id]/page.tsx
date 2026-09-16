@@ -12,6 +12,7 @@ import {
   ProjectExpensesSection,
   ProjectActivitySection,
 } from "@/components/project/ProjectTabSections";
+import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, EXPENSE_CATEGORIES } from "@/lib/constants";
 import {
@@ -1372,6 +1373,8 @@ export default function ProjectPage() {
               <p className="mt-4 text-sm text-muted">Расходов пока нет — добавьте первый, чтобы увидеть разбивку.</p>
             )}
           </div>
+
+          <ProjectTeamCard projectId={project.id} />
 
           {/* Quick actions */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

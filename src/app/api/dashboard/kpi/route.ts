@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAuth } from "@/lib/auth/requireAuth";
+import { getAccessibleProjectIds } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,8 @@ export async function GET(request: Request) {
     const fromDate = from.toISOString().slice(0, 10);
     const monthFrom = monthStart().toISOString();
 
+    const accessible = await getAccessibleProjectIds(auth.ctx);
+
     const [activeRes, expensesRes, completedRes] = await Promise.all([
       supabase
         .from("projects")
@@ -54,7 +57,10 @@ export async function GET(request: Request) {
     if (expensesRes.error) console.error(expensesRes.error);
     if (completedRes.error) console.error(completedRes.error);
 
-    const activeProjects = activeRes.data ?? [];
+    const activeProjects =
+      accessible === "all"
+        ? (activeRes.data ?? [])
+        : (activeRes.data ?? []).filter((p) => accessible.includes(p.id));
     const activeIds = new Set(activeProjects.map((p) => p.id));
     const budget = activeProjects.reduce((s, p) => s + Number(p.budget || 0), 0);
 
@@ -62,7 +68,9 @@ export async function GET(request: Request) {
       .filter((e) => activeIds.has(e.project_id))
       .reduce((s, e) => s + Number(e.amount || 0), 0);
 
-    const completedThisMonth = (completedRes.data ?? []).length;
+    const completedThisMonth = (completedRes.data ?? []).filter((s) =>
+      accessible === "all" ? true : accessible.includes(s.project_id)
+    ).length;
 
     return NextResponse.json(
       {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAuth } from "@/lib/auth/requireAuth";
+import { getAccessibleProjectIds } from "@/lib/auth/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -25,17 +26,23 @@ export async function GET() {
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
 
-    const { data: allProjects, error: projectsError } = await supabase
+    const { data: allProjectsRaw, error: projectsError } = await supabase
       .from("projects")
       .select("id, name");
 
-    if (projectsError || !allProjects) {
+    if (projectsError || !allProjectsRaw) {
       console.error(projectsError);
       return NextResponse.json(
         { error: "Ошибка загрузки активности" },
         { status: 500 }
       );
     }
+
+    const accessible = await getAccessibleProjectIds(auth.ctx);
+    const allProjects =
+      accessible === "all"
+        ? allProjectsRaw
+        : allProjectsRaw.filter((p) => accessible.includes(p.id));
 
     const result: { id: number; name: string; highlights: string[] }[] = [];
 

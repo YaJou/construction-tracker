@@ -27,7 +27,7 @@ export function canManageBudget(role: AppRole | null | undefined) {
 }
 
 export function canEditAllProjects(role: AppRole | null | undefined) {
-  return role === "owner" || role === "manager";
+  return role === "owner";
 }
 
 export function displayName(profile: Profile | null, email?: string | null) {
