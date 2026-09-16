@@ -1,17 +1,27 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useProject } from "@/hooks/useProject";
-import { Card, CardHeader, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Badge } from "@/components/ui/Badge";
-import { Progress } from "@/components/ui/Progress";
 import { Select } from "@/components/ui/Select";
+import {
+  ProjectPhotosSection,
+  ProjectExpensesSection,
+  ProjectActivitySection,
+} from "@/components/project/ProjectTabSections";
 import { PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS, EXPENSE_CATEGORIES } from "@/lib/constants";
-import { formatThousands, parseFormattedNumber, formatActivityDetails, formatPhoneInput, formatPhoneDisplay, phoneToStore } from "@/lib/format";
+import {
+  formatThousands,
+  parseFormattedNumber,
+  formatActivityDetails,
+  formatPhoneInput,
+  formatPhoneDisplay,
+  phoneToStore,
+} from "@/lib/format";
+import { cn } from "@/utils/cn";
 import {
   ArrowLeft,
   MapPin,
@@ -27,16 +37,80 @@ import {
   Camera,
   Pencil,
   X,
-  Trash2,
+  MoreHorizontal,
+  ChevronDown,
+  ChevronRight,
+  MessageSquare,
+  LayoutDashboard,
+  Phone,
+  Building2,
+  Ruler,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+
+type TabId = "overview" | "stages" | "photos" | "expenses" | "activity";
+
+type OverviewPhoto = {
+  id: number;
+  file_path: string;
+  comment: string | null;
+  created_at: string;
+};
+
+type ExpenseCategoryRow = { category: string; amount: number };
+
+function dayWord(n: number) {
+  const abs = Math.abs(n);
+  if (abs % 10 === 1 && abs % 100 !== 11) return "день";
+  if ([2, 3, 4].includes(abs % 10) && ![12, 13, 14].includes(abs % 100)) return "дня";
+  return "дней";
+}
+
+function CircularProgress({ value, size = 120 }: { value: number; size?: number }) {
+  const pct = Math.min(100, Math.max(0, value));
+  const stroke = 8;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - (pct / 100) * c;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={stroke}
+          className="text-line"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          className="text-orange transition-all duration-soft"
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-bold text-ink tabular-nums">{Math.round(pct)}%</span>
+        <span className="text-caption text-muted">готово</span>
+      </div>
+    </div>
+  );
+}
 
 export default function ProjectPage() {
   const params = useParams();
   const id = Number(params.id);
   const { project, loading, error, refetch } = useProject(isNaN(id) ? null : id);
-  const [activeTab, setActiveTab] = useState<"stages" | "photos" | "expenses" | "activity">("stages");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [photoStageId, setPhotoStageId] = useState("");
   const [photoComment, setPhotoComment] = useState("");
   const [expenseDate, setExpenseDate] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -72,6 +146,11 @@ export default function ProjectPage() {
   const stagePhotoInputRef = useRef<HTMLInputElement>(null);
   const [addingSubstepStageId, setAddingSubstepStageId] = useState<number | null>(null);
   const [newSubstepName, setNewSubstepName] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
+  const [stagesInitialized, setStagesInitialized] = useState(false);
+  const [overviewPhotos, setOverviewPhotos] = useState<OverviewPhoto[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategoryRow[]>([]);
   const [cardSettings, setCardSettings] = useState<{ object_types: { id: number; name: string }[] }>({
     object_types: [
       { id: 1, name: "Коттедж" },
@@ -91,10 +170,59 @@ export default function ProjectPage() {
       { id: 5, name: "Реконструкция" },
     ];
     fetch("/api/settings")
-      .then((r) => r.ok ? r.json() : { object_types: defaults })
+      .then((r) => (r.ok ? r.json() : { object_types: defaults }))
       .then((s) => setCardSettings({ object_types: s.object_types?.length ? s.object_types : defaults }))
       .catch(() => setCardSettings((prev) => ({ ...prev })));
   }, []);
+
+  useEffect(() => {
+    if (!project?.id) return;
+    fetch(`/api/projects/${project.id}/photos`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: OverviewPhoto[]) => {
+        const sorted = [...(Array.isArray(list) ? list : [])].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        setOverviewPhotos(sorted.slice(0, 4));
+      })
+      .catch(() => setOverviewPhotos([]));
+
+    fetch(`/api/projects/${project.id}/expenses`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.expenses?.length) {
+          setExpenseCategories([]);
+          return;
+        }
+        const map = new Map<string, number>();
+        for (const e of data.expenses as { category: string; amount: number }[]) {
+          map.set(e.category, (map.get(e.category) || 0) + e.amount);
+        }
+        const rows = [...map.entries()]
+          .map(([category, amount]) => ({ category, amount }))
+          .sort((a, b) => b.amount - a.amount);
+        setExpenseCategories(rows);
+      })
+      .catch(() => setExpenseCategories([]));
+  }, [project?.id, expensesVersion, project?.total_spent]);
+
+  useEffect(() => {
+    if (!project?.stages?.length || stagesInitialized) return;
+    const current =
+      project.stages.find((s) => s.status === "in_progress") ||
+      project.stages.find((s) => s.status === "not_started");
+    if (current) {
+      setExpandedStages(new Set([current.id]));
+    }
+    setStagesInitialized(true);
+  }, [project?.stages, stagesInitialized]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = () => setMenuOpen(false);
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, [menuOpen]);
 
   const updateStage = async (stageId: number, updates: Record<string, unknown>) => {
     if (!project) return;
@@ -294,17 +422,80 @@ export default function ProjectPage() {
     }
   };
 
+  const toggleStageExpand = (stageId: number) => {
+    setExpandedStages((prev) => {
+      const next = new Set(prev);
+      if (next.has(stageId)) next.delete(stageId);
+      else next.add(stageId);
+      return next;
+    });
+  };
+
+  const currentStage = useMemo(() => {
+    if (!project?.stages?.length) return null;
+    return (
+      project.stages.find((s) => s.status === "in_progress") ||
+      project.stages.find((s) => s.status === "not_started") ||
+      project.stages[project.stages.length - 1] ||
+      null
+    );
+  }, [project?.stages]);
+
+  const nextStage = useMemo(() => {
+    if (!project?.stages?.length || !currentStage) return null;
+    const idx = project.stages.findIndex((s) => s.id === currentStage.id);
+    return project.stages.slice(idx + 1).find((s) => s.status !== "completed") || null;
+  }, [project?.stages, currentStage]);
+
+  const completedStagesCount = project?.stages.filter((s) => s.status === "completed").length ?? 0;
+  const totalStages = project?.stages.length ?? 0;
+
+  const deadlineInfo = useMemo(() => {
+    if (!project?.planned_end_date) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const planned = new Date(project.planned_end_date);
+    planned.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((planned.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+    let tone: "ok" | "warn" | "late" = "ok";
+    if (diffDays < 0) tone = "late";
+    else if (diffDays <= 14) tone = "warn";
+    return { diffDays, tone, date: project.planned_end_date };
+  }, [project?.planned_end_date]);
+
+  const budgetUsedPct =
+    project && project.budget > 0
+      ? Math.min(100, Math.round((project.total_spent / project.budget) * 100))
+      : 0;
+
+  const isEmptyProject =
+    !!project &&
+    project.stages.every((s) => s.status === "not_started" && s.progress_percent === 0) &&
+    overviewPhotos.length === 0 &&
+    project.total_spent === 0;
+
+  const openCommentOnCurrent = () => {
+    if (!currentStage) {
+      setActiveTab("stages");
+      return;
+    }
+    setActiveTab("stages");
+    setExpandedStages((prev) => new Set(prev).add(currentStage.id));
+    setEditingCommentStageId(currentStage.id);
+    setEditStageComment(currentStage.comment || "");
+  };
+
   if (loading || !project) {
     return (
       <div className="flex items-center justify-center min-h-[40vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-ink-muted" />
+        <Loader2 className="w-8 h-8 animate-spin text-muted" />
       </div>
     );
   }
   if (error) {
     return (
       <div className="space-y-4">
-        <Link href="/dashboard" className="inline-flex items-center gap-2 text-ink-muted hover:text-ink">
+        <Link href="/dashboard" className="inline-flex items-center gap-2 text-muted hover:text-ink">
           <ArrowLeft className="w-4 h-4" /> Назад
         </Link>
         <p className="text-red-600">{error}</p>
@@ -312,432 +503,202 @@ export default function ProjectPage() {
     );
   }
 
-  const tabs = [
-    { id: "stages" as const, label: "Этапы", icon: CheckCircle2 },
-    { id: "photos" as const, label: "Фото", icon: ImagePlus },
-    { id: "expenses" as const, label: "Расходы", icon: DollarSign },
-    { id: "activity" as const, label: "Журнал", icon: History },
+  const tabs: { id: TabId; label: string; icon: typeof LayoutDashboard }[] = [
+    { id: "overview", label: "Обзор", icon: LayoutDashboard },
+    { id: "stages", label: "Этапы", icon: CheckCircle2 },
+    { id: "photos", label: "Фото", icon: ImagePlus },
+    { id: "expenses", label: "Расходы", icon: DollarSign },
+    { id: "activity", label: "Журнал", icon: History },
   ];
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <Link
-            href="/dashboard"
-            className="p-2 rounded-lg hover:bg-surface-muted text-ink-muted hover:text-ink touch-target"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
-            <h1 className="text-2xl font-semibold text-ink">{project.name}</h1>
-            <p className="text-ink-muted mt-0.5">{project.address}</p>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <Badge
-                variant={
-                  project.status === "completed"
-                    ? "success"
-                    : project.status === "construction"
-                      ? "default"
-                      : "muted"
-                }
-              >
-                {PROJECT_STATUS_LABELS[project.status] || project.status}
-              </Badge>
-              {project.manager && (
-                <span className="text-sm text-ink-muted">Ответственный: {project.manager}</span>
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button onClick={handleExportReport} variant="secondary" className="shrink-0">
-            <FileText className="w-4 h-4 mr-2" />
-            Отчёт PDF
-          </Button>
-          <Button
-            variant="ghost"
-            size="md"
-            className="shrink-0 text-ink-muted"
-            onClick={async () => {
-              if (!project) return;
-              const newArchived = !project.archived;
-              await fetch(`/api/projects/${project.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ archived: newArchived }),
-              });
-              refetch();
-            }}
-          >
-            {project.archived ? "Восстановить из архива" : "В архив"}
-          </Button>
-        </div>
-      </div>
+  const statusChipClass =
+    project.status === "completed"
+      ? "bg-green/10 text-green"
+      : project.status === "construction"
+        ? "bg-cream text-orange"
+        : "bg-surface text-muted";
 
-      <Card>
-        <CardContent className="p-5">
-          {project.last_activity && (
-            <div className="mb-4 pb-4 border-b border-border">
-              <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Последнее обновление</p>
-              <p className="mt-0.5 text-sm text-ink">
-                {(() => {
-                  const d = new Date(project.last_activity!.created_at);
-                  const today = new Date();
-                  const isToday = d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
-                  return isToday ? `Сегодня ${format(d, "HH:mm")}` : format(d, "d MMM, HH:mm", { locale: ru });
-                })()}
-              </p>
-              {project.last_activity.details && (
-                <p className="mt-0.5 text-sm text-ink-muted">{formatActivityDetails(project.last_activity.details)}</p>
-              )}
-            </div>
-          )}
-          <div className="flex items-center justify-end gap-2 mb-4">
-            {!isEditingCard ? (
-              <button
-                type="button"
-                onClick={startEditingCard}
-                className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink"
-              >
-                <Pencil className="w-4 h-4" /> Редактировать
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setIsEditingCard(false)} disabled={savingCard}>
-                  <X className="w-4 h-4 mr-1" /> Отмена
-                </Button>
-                <Button size="sm" onClick={saveCard} disabled={savingCard}>
-                  {savingCard ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                  Сохранить
-                </Button>
-              </div>
+  const renderStagesList = () => (
+    <div className="space-y-4">
+      <input
+        ref={stagePhotoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => setStagePhotoFile(e.target.files?.[0] ?? null)}
+      />
+
+      {currentStage && currentStage.status === "in_progress" && (
+        <div className="rounded-[18px] border border-orange/30 bg-cream p-4 md:p-5">
+          <p className="text-caption font-medium uppercase tracking-wider text-orange">Сейчас в работе</p>
+          <p className="mt-1 text-lg font-semibold text-ink">{currentStage.name}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted">
+            <span className="tabular-nums">{currentStage.progress_percent}%</span>
+            {currentStage.start_date && (
+              <span>с {format(new Date(currentStage.start_date), "d MMM", { locale: ru })}</span>
             )}
+            {nextStage && <span>далее: {nextStage.name}</span>}
           </div>
-          {isEditingCard ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Клиент</label>
-                  <Input value={editClient} onChange={(e) => setEditClient(e.target.value)} placeholder="Клиент" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Телефон</label>
-                  <Input type="tel" inputMode="numeric" value={editPhone ? formatPhoneDisplay(editPhone) : ""} onChange={(e) => setEditPhone(formatPhoneInput(e.target.value))} placeholder="+7 ___ ___ __ __" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Тип объекта</label>
-                  {cardSettings.object_types.length > 0 ? (
-                    <Select value={editObjectType} onChange={(e) => setEditObjectType(e.target.value)}>
-                      <option value="">—</option>
-                      {cardSettings.object_types.map((o) => (
-                        <option key={o.id} value={o.name}>{o.name}</option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <Input value={editObjectType} onChange={(e) => setEditObjectType(e.target.value)} placeholder="Коттедж, ЖК..." />
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Площадь (м²)</label>
-                  <Input type="text" inputMode="decimal" value={editAreaSqm} onChange={(e) => { const v = e.target.value.replace(/[^\d.]/g, "").replace(/\.(?=.*\.)/g, ""); setEditAreaSqm(v); }} placeholder="250" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Дата начала</label>
-                  <Input type="date" value={editStartDate} onChange={(e) => setEditStartDate(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Планируемая сдача</label>
-                  <Input type="date" value={editPlannedEndDate} onChange={(e) => setEditPlannedEndDate(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Бюджет (₽)</label>
-                  <Input type="text" inputMode="numeric" value={editBudget} onChange={(e) => setEditBudget(formatThousands(e.target.value))} placeholder="0" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-ink-muted uppercase tracking-wider mb-1">Заметка</label>
-                <textarea value={editNote} onChange={(e) => setEditNote(e.target.value)} rows={2} className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ink/20" placeholder="Заметка по объекту" />
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Клиент</p>
-                  <p className="mt-1 font-medium">{project.client}</p>
-                </div>
-                {(project.phone != null && project.phone !== "") && (
-                  <div>
-                    <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Телефон</p>
-                    <p className="mt-1">{project.phone}</p>
-                  </div>
-                )}
-                {(project.object_type != null && project.object_type !== "") && (
-                  <div>
-                    <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Тип объекта</p>
-                    <p className="mt-1 font-medium">{project.object_type}</p>
-                  </div>
-                )}
-                {(project.area_sqm != null && project.area_sqm > 0) && (
-                  <div>
-                    <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Площадь</p>
-                    <p className="mt-1 font-medium">{project.area_sqm} м²</p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Дата начала</p>
-                  <p className="mt-1">
-                    {project.start_date
-                      ? format(new Date(project.start_date), "d MMM yyyy", { locale: ru })
-                      : "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Планируемая сдача</p>
-                  <p className="mt-1">
-                    {project.planned_end_date
-                      ? format(new Date(project.planned_end_date), "d MMM yyyy", { locale: ru })
-                      : "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Прогресс</p>
-                  <Progress value={project.progress_percent} showLabel className="mt-1" />
-                </div>
-              </div>
-              {project.planned_end_date && (() => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const planned = new Date(project.planned_end_date);
-                planned.setHours(0, 0, 0, 0);
-                const diffMs = planned.getTime() - today.getTime();
-                const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
-                const dayWord = (n: number) => {
-                  const abs = Math.abs(n);
-                  if (abs % 10 === 1 && abs % 100 !== 11) return "день";
-                  if ([2, 3, 4].includes(abs % 10) && ![12, 13, 14].includes(abs % 100)) return "дня";
-                  return "дней";
-                };
-                return (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Дней до сдачи</p>
-                    <p className="mt-1">
-                      Сдача: {format(new Date(project.planned_end_date), "d MMM yyyy", { locale: ru })}
-                      {diffDays > 0 && (
-                        <span className="text-ink ml-1">· Осталось: {diffDays} {dayWord(diffDays)}</span>
-                      )}
-                      {diffDays < 0 && (
-                        <span className="text-red-600 font-medium ml-1">· Просрочка: {Math.abs(diffDays)} {dayWord(diffDays)}</span>
-                      )}
-                      {diffDays === 0 && (
-                        <span className="text-amber-600 font-medium ml-1">· Сдача сегодня</span>
-                      )}
-                    </p>
-                  </div>
-                );
-              })()}
-              <div className="mt-4 pt-4 border-t border-border grid sm:grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Бюджет</p>
-                  <p className="mt-1 font-semibold">
-                    {project.budget.toLocaleString("ru-RU")} ₽
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Потрачено</p>
-                  <p className="mt-1 font-semibold text-ink">
-                    {project.total_spent.toLocaleString("ru-RU")} ₽
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Остаток</p>
-                  <p className={`mt-1 font-semibold ${project.budget_remaining >= 0 ? "text-ink" : "text-red-600"}`}>
-                    {project.budget_remaining.toLocaleString("ru-RU")} ₽
-                  </p>
-                </div>
-              </div>
-              {(project.note != null && project.note !== "") && (
-                <div className="mt-4 pt-4 border-t border-border">
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Заметка</p>
-                  <p className="mt-1 text-ink whitespace-pre-wrap">{project.note}</p>
-                </div>
-              )}
-              {(project.timeline_entries?.length ?? 0) > 0 && (
-                <div className="mt-4 pt-4 border-t border-border">
-                  <p className="text-xs font-medium text-ink-muted uppercase tracking-wider mb-3">Таймлайн стройки</p>
-                  <ul className="space-y-0">
-                    {project.timeline_entries!.reduce<{ date: string; items: { created_at: string; details: string | null }[] }[]>((acc, entry) => {
-                      const dateKey = format(new Date(entry.created_at), "d MMM", { locale: ru });
-                      const last = acc[acc.length - 1];
-                      if (last && last.date === dateKey) {
-                        last.items.push(entry);
-                      } else {
-                        acc.push({ date: dateKey, items: [entry] });
-                      }
-                      return acc;
-                    }, []).map((group) => (
-                      <li key={group.date} className="flex gap-3 py-2 first:pt-0">
-                        <span className="text-sm font-medium text-ink shrink-0 w-16">{group.date}</span>
-                        <ul className="flex-1 space-y-1 min-w-0">
-                          {group.items.map((item, i) => {
-                            const text = formatActivityDetails(item.details);
-                            const withAmount = text.replace(/\s—\s(\d+)\s*₽/, (_, n) => ` — ${Number(n).toLocaleString("ru-RU")} ₽`);
-                            return (
-                              <li key={`${item.created_at}-${i}`} className="text-sm text-ink-muted">
-                                {withAmount || "—"}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
-      <div className="flex gap-2 overflow-x-auto pb-2 -mx-1">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap touch-target transition-colors ${
-              activeTab === id
-                ? "bg-ink text-white"
-                : "bg-white border border-border text-ink-muted hover:bg-surface-muted"
-            }`}
-          >
-            <Icon className="w-4 h-4" />
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-ink">Этапы строительства</h2>
+        <p className="text-sm text-muted">
+          Готово {completedStagesCount} из {totalStages} этапов
+        </p>
       </div>
 
-      {activeTab === "stages" && (
-        <Card>
-          <CardHeader>
-            <h2 className="font-semibold text-ink">Этапы строительства</h2>
-          </CardHeader>
-          <CardContent className="p-0">
-            <input
-              ref={stagePhotoInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => setStagePhotoFile(e.target.files?.[0] ?? null)}
-            />
-            <ul className="divide-y divide-border">
-              {project.stages.map((stage) => (
-                <li key={stage.id} className="px-5 py-4 flex flex-col gap-3">
-                  {editingStageId === stage.id ? (
-                    <>
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="sm:col-span-2">
-                          <label className="block text-xs font-medium text-ink-muted mb-1">Название этапа</label>
-                          <Input value={editStageName} onChange={(e) => setEditStageName(e.target.value)} placeholder="Название" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-ink-muted mb-1">Начат</label>
-                          <Input type="date" value={editStageStartDate} onChange={(e) => setEditStageStartDate(e.target.value)} />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-ink-muted mb-1">Завершён</label>
-                          <Input type="date" value={editStageEndDate} onChange={(e) => setEditStageEndDate(e.target.value)} />
+      {project.stages.length === 0 ? (
+        <div className="rounded-[18px] border border-line bg-white px-5 py-10 text-center">
+          <p className="text-muted">Этапы ещё не созданы</p>
+          <p className="mt-1 text-sm text-ink-subtle">Они появятся после настройки объекта</p>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {project.stages.map((stage) => {
+            const expanded = expandedStages.has(stage.id) || editingStageId === stage.id;
+            const isDone = stage.status === "completed";
+            return (
+              <li
+                key={stage.id}
+                className={cn(
+                  "rounded-[18px] border bg-white overflow-hidden transition-colors",
+                  isDone ? "border-line opacity-80" : "border-line shadow-[0_8px_24px_rgba(23,63,52,0.04)]",
+                  stage.status === "in_progress" && "border-orange/25"
+                )}
+              >
+                {editingStageId === stage.id ? (
+                  <div className="p-4 md:p-5 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-medium text-muted mb-1">Название этапа</label>
+                        <Input value={editStageName} onChange={(e) => setEditStageName(e.target.value)} placeholder="Название" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">Начат</label>
+                        <Input type="date" value={editStageStartDate} onChange={(e) => setEditStageStartDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">Завершён</label>
+                        <Input type="date" value={editStageEndDate} onChange={(e) => setEditStageEndDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" onClick={saveStageEdit} disabled={savingStage}>
+                        {savingStage ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                        Сохранить
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditingStageId(null)} disabled={savingStage}>
+                        Отмена
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => toggleStageExpand(stage.id)}
+                      className="w-full flex items-center gap-3 px-4 md:px-5 py-4 text-left hover:bg-surface/60 transition-colors"
+                    >
+                      <span
+                        className={cn(
+                          "shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
+                          isDone ? "bg-green/10" : "bg-surface"
+                        )}
+                      >
+                        {isDone ? (
+                          <CheckCircle2 className="w-4 h-4 text-green" />
+                        ) : stage.status === "in_progress" ? (
+                          <Loader2 className="w-4 h-4 text-orange" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-ink-subtle" />
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("font-medium", isDone ? "text-muted" : "text-ink")}>{stage.name}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+                          <span>{STAGE_STATUS_LABELS[stage.status] || stage.status}</span>
+                          <span className="tabular-nums">{stage.progress_percent}%</span>
+                          {stage.start_date && (
+                            <span>с {format(new Date(stage.start_date), "d MMM", { locale: ru })}</span>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" onClick={saveStageEdit} disabled={savingStage}>
-                          {savingStage ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                          Сохранить
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setEditingStageId(null)} disabled={savingStage}>
-                          Отмена
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-surface-muted">
-                            {stage.status === "completed" ? (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            ) : (
-                              <Circle className="w-4 h-4 text-ink-subtle" />
-                            )}
+                      {expanded ? (
+                        <ChevronDown className="w-5 h-5 text-muted shrink-0" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5 text-muted shrink-0" />
+                      )}
+                    </button>
+
+                    {expanded && (
+                      <div className="px-4 md:px-5 pb-4 md:pb-5 border-t border-line pt-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2.5 rounded-full bg-line overflow-hidden">
+                            <div
+                              className={cn("h-full rounded-full transition-all", isDone ? "bg-green" : "bg-orange")}
+                              style={{ width: `${Math.min(100, Math.max(0, stage.progress_percent))}%` }}
+                            />
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-medium text-ink">{stage.name}</p>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-ink-muted">
-                              {stage.start_date && (
-                                <span>Начат: {format(new Date(stage.start_date), "d MMM", { locale: ru })}</span>
-                              )}
-                              {stage.status === "completed" && stage.end_date && (
-                                <span>Завершён: {format(new Date(stage.end_date), "d MMM", { locale: ru })}</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <div className="w-28 h-2.5 rounded-full bg-gray-200 overflow-hidden border border-gray-300/50">
-                                <div
-                                  className="h-full rounded-full bg-ink transition-all duration-200"
-                                  style={{ width: `${Math.min(100, Math.max(0, stage.progress_percent))}%` }}
-                                />
-                              </div>
-                              <span className="text-sm text-ink-muted tabular-nums shrink-0">Прогресс: {stage.progress_percent}%</span>
-                            </div>
-                            {stage.comment && (
-                              <p className="text-sm text-ink-muted mt-1">{stage.comment}</p>
-                            )}
-                            {(stage.substeps?.length ?? 0) > 0 && (
-                              <ul className="mt-2 space-y-1 pl-0">
-                                {stage.substeps!.map((sub) => (
-                                  <li key={sub.id}>
-                                    <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-                                      <input
-                                        type="checkbox"
-                                        checked={sub.completed}
-                                        onChange={() => toggleSubstep(sub.id, !sub.completed)}
-                                        className="rounded border-border text-ink"
-                                      />
-                                      <span className={sub.completed ? "line-through text-ink-muted" : "text-ink"}>{sub.name}</span>
-                                    </label>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {addingSubstepStageId === stage.id ? (
-                              <div className="flex flex-wrap items-center gap-2 mt-2">
-                                <Input
-                                  value={newSubstepName}
-                                  onChange={(e) => setNewSubstepName(e.target.value)}
-                                  placeholder="Название подэтапа"
-                                  className="w-full sm:w-48"
-                                  onKeyDown={(e) => e.key === "Enter" && addSubstep(stage.id)}
-                                />
-                                <Button size="sm" onClick={() => addSubstep(stage.id)} disabled={!newSubstepName.trim()}>
-                                  Добавить
-                                </Button>
-                                <Button variant="ghost" size="sm" onClick={() => { setAddingSubstepStageId(null); setNewSubstepName(""); }}>
-                                  Отмена
-                                </Button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                className="text-sm text-ink-muted hover:text-ink mt-2"
-                                onClick={() => setAddingSubstepStageId(stage.id)}
-                              >
-                                + Добавить подэтап
-                              </button>
-                            )}
-                          </div>
+                          <span className="text-sm text-muted tabular-nums shrink-0">{stage.progress_percent}%</span>
                         </div>
-                        <div className="flex items-center gap-2 sm:ml-auto flex-wrap">
+
+                        {stage.comment && <p className="text-sm text-muted">{stage.comment}</p>}
+
+                        {(stage.substeps?.length ?? 0) > 0 && (
+                          <ul className="space-y-1.5">
+                            {stage.substeps!.map((sub) => (
+                              <li key={sub.id}>
+                                <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={sub.completed}
+                                    onChange={() => toggleSubstep(sub.id, !sub.completed)}
+                                    className="rounded border-line text-green"
+                                  />
+                                  <span className={sub.completed ? "line-through text-muted" : "text-ink"}>{sub.name}</span>
+                                </label>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {addingSubstepStageId === stage.id ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Input
+                              value={newSubstepName}
+                              onChange={(e) => setNewSubstepName(e.target.value)}
+                              placeholder="Название подэтапа"
+                              className="w-full sm:w-48"
+                              onKeyDown={(e) => e.key === "Enter" && addSubstep(stage.id)}
+                            />
+                            <Button size="sm" onClick={() => addSubstep(stage.id)} disabled={!newSubstepName.trim()}>
+                              Добавить
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setAddingSubstepStageId(null);
+                                setNewSubstepName("");
+                              }}
+                            >
+                              Отмена
+                            </Button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="text-sm text-muted hover:text-ink"
+                            onClick={() => setAddingSubstepStageId(stage.id)}
+                          >
+                            + Добавить подэтап
+                          </button>
+                        )}
+
+                        <div className="flex items-center gap-2 flex-wrap pt-1">
                           <button
                             type="button"
                             onClick={() => {
@@ -745,10 +706,10 @@ export default function ProjectPage() {
                               setStagePhotoFile(null);
                               setStagePhotoComment("");
                             }}
-                            className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink px-2 py-1.5 rounded-lg border border-border hover:bg-surface-muted"
+                            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink px-2.5 py-1.5 rounded-[10px] border border-line hover:bg-surface"
                             title="Добавить фото этапа"
                           >
-                            📷 добавить фото
+                            <Camera className="w-4 h-4" /> фото
                           </button>
                           <button
                             type="button"
@@ -756,15 +717,15 @@ export default function ProjectPage() {
                               setEditingCommentStageId(stage.id);
                               setEditStageComment(stage.comment || "");
                             }}
-                            className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink px-2 py-1.5 rounded-lg border border-border hover:bg-surface-muted"
+                            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink px-2.5 py-1.5 rounded-[10px] border border-line hover:bg-surface"
                             title="Комментарий к этапу"
                           >
-                            📝 комментарий
+                            <MessageSquare className="w-4 h-4" /> комментарий
                           </button>
                           <button
                             type="button"
                             onClick={() => startEditingStage(stage)}
-                            className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink p-2 rounded-lg hover:bg-surface-muted"
+                            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink p-2 rounded-[10px] hover:bg-surface"
                             title="Редактировать этап"
                           >
                             <Pencil className="w-4 h-4" />
@@ -782,7 +743,7 @@ export default function ProjectPage() {
                                   : {}),
                               })
                             }
-                            className="rounded-lg border border-border px-3 py-2 text-sm min-w-[140px]"
+                            className="rounded-[10px] border border-line px-3 py-2 text-sm min-w-[140px] bg-white"
                           >
                             {Object.entries(STAGE_STATUS_LABELS).map(([val, label]) => (
                               <option key={val} value={val}>
@@ -795,82 +756,659 @@ export default function ProjectPage() {
                             min={0}
                             max={100}
                             value={stage.progress_percent}
-                            onChange={(e) =>
-                              updateStage(stage.id, { progress_percent: Number(e.target.value) })
-                            }
-                            className="w-14 rounded border border-border px-2 py-2 text-sm text-center"
+                            onChange={(e) => updateStage(stage.id, { progress_percent: Number(e.target.value) })}
+                            className="w-14 rounded-[10px] border border-line px-2 py-2 text-sm text-center"
                           />
-                          <span className="text-ink-muted text-sm">%</span>
+                          <span className="text-muted text-sm">%</span>
                         </div>
+
+                        {editingCommentStageId === stage.id && (
+                          <div className="pt-3 border-t border-line flex flex-wrap items-center gap-2">
+                            <Input
+                              value={editStageComment}
+                              onChange={(e) => setEditStageComment(e.target.value)}
+                              placeholder="Комментарий к этапу"
+                              className="flex-1 min-w-[200px]"
+                            />
+                            <Button size="sm" onClick={saveStageCommentQuick} disabled={savingStageComment}>
+                              {savingStageComment ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                              Сохранить
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingCommentStageId(null)}
+                              disabled={savingStageComment}
+                            >
+                              Отмена
+                            </Button>
+                          </div>
+                        )}
+
+                        {stagePhotoStageId === stage.id && (
+                          <div className="pt-3 border-t border-line flex flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => stagePhotoInputRef.current?.click()}
+                            >
+                              <Camera className="w-4 h-4 mr-1" />
+                              Выбрать фото
+                            </Button>
+                            <span className="text-sm text-muted truncate max-w-[140px]">
+                              {stagePhotoFile ? stagePhotoFile.name : "Файл не выбран"}
+                            </span>
+                            <Input
+                              value={stagePhotoComment}
+                              onChange={(e) => setStagePhotoComment(e.target.value)}
+                              placeholder="Подпись к фото"
+                              className="flex-1 min-w-[120px]"
+                            />
+                            <Button
+                              size="sm"
+                              onClick={() => uploadStagePhoto(stage.id)}
+                              disabled={!stagePhotoFile || uploadingStagePhoto}
+                            >
+                              {uploadingStagePhoto ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                              Загрузить
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setStagePhotoStageId(null);
+                                setStagePhotoFile(null);
+                                setStagePhotoComment("");
+                                if (stagePhotoInputRef.current) stagePhotoInputRef.current.value = "";
+                              }}
+                              disabled={uploadingStagePhoto}
+                            >
+                              Отмена
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {editingCommentStageId === stage.id && (
-                        <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center gap-2">
-                          <Input
-                            value={editStageComment}
-                            onChange={(e) => setEditStageComment(e.target.value)}
-                            placeholder="Комментарий к этапу"
-                            className="flex-1 min-w-[200px]"
-                          />
-                          <Button size="sm" onClick={saveStageCommentQuick} disabled={savingStageComment}>
-                            {savingStageComment ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                            Сохранить
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => setEditingCommentStageId(null)} disabled={savingStageComment}>
-                            Отмена
-                          </Button>
-                        </div>
-                      )}
-                      {stagePhotoStageId === stage.id && (
-                        <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => stagePhotoInputRef.current?.click()}
-                          >
-                            <Camera className="w-4 h-4 mr-1" />
-                            Выбрать фото
-                          </Button>
-                          <span className="text-sm text-ink-muted truncate max-w-[140px]">
-                            {stagePhotoFile ? stagePhotoFile.name : "Файл не выбран"}
-                          </span>
-                          <Input
-                            value={stagePhotoComment}
-                            onChange={(e) => setStagePhotoComment(e.target.value)}
-                            placeholder="Подпись к фото"
-                            className="flex-1 min-w-[120px]"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => uploadStagePhoto(stage.id)}
-                            disabled={!stagePhotoFile || uploadingStagePhoto}
-                          >
-                            {uploadingStagePhoto ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                            Загрузить
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setStagePhotoStageId(null);
-                              setStagePhotoFile(null);
-                              setStagePhotoComment("");
-                              if (stagePhotoInputRef.current) stagePhotoInputRef.current.value = "";
-                            }}
-                            disabled={uploadingStagePhoto}
-                          >
-                            Отмена
-                          </Button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <header className="space-y-4">
+        <div className="flex items-start gap-3">
+          <Link
+            href="/dashboard"
+            className="mt-1 p-2 rounded-[10px] hover:bg-surface text-muted hover:text-ink touch-target shrink-0"
+            aria-label="Назад"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div className="min-w-0 flex-1">
+            <nav className="flex flex-wrap items-center gap-1.5 text-caption text-muted mb-2">
+              <Link href="/dashboard" className="hover:text-ink">
+                Дашборд
+              </Link>
+              <span className="text-ink-subtle">/</span>
+              <Link href="/dashboard" className="hover:text-ink">
+                Объекты
+              </Link>
+              <span className="text-ink-subtle">/</span>
+              <span className="text-ink truncate">{project.name}</span>
+            </nav>
+            <h1 className="text-2xl md:text-3xl font-bold text-ink tracking-tight">{project.name}</h1>
+            <p className="mt-1 flex items-start gap-1.5 text-muted">
+              <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-orange" />
+              <span>{project.address || "Адрес не указан"}</span>
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-caption font-medium", statusChipClass)}>
+                {PROJECT_STATUS_LABELS[project.status] || project.status}
+              </span>
+              {project.manager && (
+                <span className="inline-flex items-center gap-1.5 text-sm text-muted">
+                  <User className="w-4 h-4" />
+                  Ответственный: <span className="text-ink font-medium">{project.manager}</span>
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              onClick={() => {
+                setActiveTab("overview");
+                startEditingCard();
+              }}
+            >
+              <Pencil className="w-4 h-4 mr-2" />
+              Редактировать
+            </Button>
+            <Button onClick={handleExportReport} variant="secondary" className="shrink-0">
+              <FileText className="w-4 h-4 mr-2" />
+              Отчёт PDF
+            </Button>
+            <div className="relative">
+              <button
+                type="button"
+                className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[10px] border border-line bg-white text-muted hover:text-ink hover:bg-surface"
+                aria-label="Меню"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((v) => !v);
+                }}
+              >
+                <MoreHorizontal className="w-5 h-5" />
+              </button>
+              {menuOpen && (
+                <div
+                  className="absolute right-0 mt-1 z-20 min-w-[200px] rounded-[12px] border border-line bg-white py-1 shadow-soft"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface"
+                    onClick={async () => {
+                      setMenuOpen(false);
+                      const newArchived = !project.archived;
+                      await fetch(`/api/projects/${project.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ archived: newArchived }),
+                      });
+                      refetch();
+                    }}
+                  >
+                    {project.archived ? "Восстановить из архива" : "В архив"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
+        {tabs.map(({ id: tabId, label, icon: Icon }) => (
+          <button
+            key={tabId}
+            onClick={() => setActiveTab(tabId)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-[10px] text-sm font-medium whitespace-nowrap touch-target transition-colors",
+              activeTab === tabId
+                ? "bg-green text-white"
+                : "bg-white border border-line text-muted hover:bg-surface hover:text-ink"
+            )}
+          >
+            <Icon className={cn("w-4 h-4", activeTab === tabId ? "text-white" : "text-orange")} />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="space-y-6">
+          {isEmptyProject && (
+            <div className="rounded-[18px] border border-dashed border-line bg-surface px-5 py-6">
+              <p className="font-semibold text-ink">Объект только создан</p>
+              <p className="mt-1 text-sm text-muted">Начните с этих шагов:</p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2 text-sm">
+                <li>
+                  <button type="button" className="text-orange font-medium hover:underline" onClick={startEditingCard}>
+                    Заполните карточку объекта
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="text-orange font-medium hover:underline" onClick={() => setActiveTab("stages")}>
+                    Отметьте текущий этап
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="text-orange font-medium hover:underline" onClick={() => setActiveTab("photos")}>
+                    Добавьте первое фото
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="text-orange font-medium hover:underline" onClick={() => setActiveTab("expenses")}>
+                    Зафиксируйте расход
+                  </button>
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {/* Progress + details */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+                <CircularProgress value={project.progress_percent} />
+                <div className="min-w-0 space-y-3 flex-1">
+                  <div>
+                    <p className="text-caption font-medium uppercase tracking-wider text-muted">Текущий этап</p>
+                    <p className="mt-0.5 font-semibold text-ink">
+                      {currentStage?.name || "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-caption font-medium uppercase tracking-wider text-muted">Следующий шаг</p>
+                    <p className="mt-0.5 text-ink">{nextStage?.name || "Все этапы завершены или не заданы"}</p>
+                  </div>
+                  <div>
+                    <p className="text-caption font-medium uppercase tracking-wider text-muted">Срок сдачи</p>
+                    {deadlineInfo ? (
+                      <p className="mt-0.5 flex flex-wrap items-center gap-2">
+                        <span
+                          className={cn(
+                            "inline-block w-2 h-2 rounded-full",
+                            deadlineInfo.tone === "late" && "bg-red-500",
+                            deadlineInfo.tone === "warn" && "bg-orange",
+                            deadlineInfo.tone === "ok" && "bg-green"
+                          )}
+                        />
+                        <span className="text-ink">
+                          {format(new Date(deadlineInfo.date), "d MMM yyyy", { locale: ru })}
+                        </span>
+                        {deadlineInfo.diffDays > 0 && (
+                          <span className="text-muted">
+                            · осталось {deadlineInfo.diffDays} {dayWord(deadlineInfo.diffDays)}
+                          </span>
+                        )}
+                        {deadlineInfo.diffDays < 0 && (
+                          <span className="text-red-600 font-medium">
+                            · просрочка {Math.abs(deadlineInfo.diffDays)} {dayWord(deadlineInfo.diffDays)}
+                          </span>
+                        )}
+                        {deadlineInfo.diffDays === 0 && (
+                          <span className="text-orange font-medium">· сегодня</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 text-muted">Не указан</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <h2 className="font-semibold text-ink">Карточка объекта</h2>
+                {!isEditingCard ? (
+                  <button
+                    type="button"
+                    onClick={startEditingCard}
+                    className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+                  >
+                    <Pencil className="w-4 h-4" /> Редактировать
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setIsEditingCard(false)} disabled={savingCard}>
+                      <X className="w-4 h-4 mr-1" /> Отмена
+                    </Button>
+                    <Button size="sm" onClick={saveCard} disabled={savingCard}>
+                      {savingCard ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                      Сохранить
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {isEditingCard ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Клиент</label>
+                      <Input value={editClient} onChange={(e) => setEditClient(e.target.value)} placeholder="Клиент" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Телефон</label>
+                      <Input
+                        type="tel"
+                        inputMode="numeric"
+                        value={editPhone ? formatPhoneDisplay(editPhone) : ""}
+                        onChange={(e) => setEditPhone(formatPhoneInput(e.target.value))}
+                        placeholder="+7 ___ ___ __ __"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Тип объекта</label>
+                      {cardSettings.object_types.length > 0 ? (
+                        <Select value={editObjectType} onChange={(e) => setEditObjectType(e.target.value)}>
+                          <option value="">—</option>
+                          {cardSettings.object_types.map((o) => (
+                            <option key={o.id} value={o.name}>
+                              {o.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input
+                          value={editObjectType}
+                          onChange={(e) => setEditObjectType(e.target.value)}
+                          placeholder="Коттедж, ЖК..."
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Площадь (м²)</label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={editAreaSqm}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^\d.]/g, "").replace(/\.(?=.*\.)/g, "");
+                          setEditAreaSqm(v);
+                        }}
+                        placeholder="250"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Дата начала</label>
+                      <Input type="date" value={editStartDate} onChange={(e) => setEditStartDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">
+                        Планируемая сдача
+                      </label>
+                      <Input
+                        type="date"
+                        value={editPlannedEndDate}
+                        onChange={(e) => setEditPlannedEndDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Бюджет (₽)</label>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={editBudget}
+                        onChange={(e) => setEditBudget(formatThousands(e.target.value))}
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">Заметка</label>
+                    <textarea
+                      value={editNote}
+                      onChange={(e) => setEditNote(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-[12px] border border-line px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange/30"
+                      placeholder="Заметка по объекту"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <dl className="grid gap-3 sm:grid-cols-2 text-sm">
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <User className="w-3.5 h-3.5" /> Клиент
+                    </dt>
+                    <dd className="mt-0.5 font-medium text-ink">{project.client || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <Phone className="w-3.5 h-3.5" /> Телефон
+                    </dt>
+                    <dd className="mt-0.5 text-ink">{project.phone || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <Building2 className="w-3.5 h-3.5" /> Тип
+                    </dt>
+                    <dd className="mt-0.5 font-medium text-ink">{project.object_type || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <Ruler className="w-3.5 h-3.5" /> Площадь
+                    </dt>
+                    <dd className="mt-0.5 font-medium text-ink">
+                      {project.area_sqm != null && project.area_sqm > 0 ? `${project.area_sqm} м²` : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" /> Начало
+                    </dt>
+                    <dd className="mt-0.5 text-ink">
+                      {project.start_date
+                        ? format(new Date(project.start_date), "d MMM yyyy", { locale: ru })
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" /> Сдача
+                    </dt>
+                    <dd className="mt-0.5 text-ink">
+                      {project.planned_end_date
+                        ? format(new Date(project.planned_end_date), "d MMM yyyy", { locale: ru })
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-caption text-muted flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5" /> Адрес
+                    </dt>
+                    <dd className="mt-0.5 text-ink">{project.address || "—"}</dd>
+                  </div>
+                  {project.note ? (
+                    <div className="sm:col-span-2 pt-2 border-t border-line">
+                      <dt className="text-caption text-muted">Заметка</dt>
+                      <dd className="mt-0.5 text-ink whitespace-pre-wrap">{project.note}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              )}
+            </div>
+          </div>
+
+          {/* Budget */}
+          <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div>
+                <h2 className="font-semibold text-ink">Бюджет</h2>
+                <p className="mt-1 text-sm text-muted">Использовано {budgetUsedPct}%</p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => setActiveTab("expenses")}
+                className="shrink-0 bg-orange hover:bg-orange/90 text-white border-0"
+              >
+                <DollarSign className="w-4 h-4 mr-1.5" />
+                Добавить расход
+              </Button>
+            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-caption text-muted">Бюджет</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums">{project.budget.toLocaleString("ru-RU")} ₽</p>
+              </div>
+              <div>
+                <p className="text-caption text-muted">Потрачено</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums text-ink">
+                  {project.total_spent.toLocaleString("ru-RU")} ₽
+                </p>
+              </div>
+              <div>
+                <p className="text-caption text-muted">Остаток</p>
+                <p
+                  className={cn(
+                    "mt-0.5 text-lg font-semibold tabular-nums",
+                    project.budget_remaining >= 0 ? "text-green" : "text-red-600"
+                  )}
+                >
+                  {project.budget_remaining.toLocaleString("ru-RU")} ₽
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 h-2.5 rounded-full bg-line overflow-hidden">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  budgetUsedPct > 100 || project.budget_remaining < 0 ? "bg-red-500" : "bg-orange"
+                )}
+                style={{ width: `${Math.min(100, budgetUsedPct)}%` }}
+              />
+            </div>
+
+            {expenseCategories.length > 0 ? (
+              <div className="mt-5 space-y-2">
+                <p className="text-caption font-medium text-muted uppercase tracking-wider">По категориям</p>
+                {expenseCategories.slice(0, 5).map((row) => {
+                  const max = expenseCategories[0]?.amount || 1;
+                  const w = Math.round((row.amount / max) * 100);
+                  return (
+                    <div key={row.category}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-ink">{row.category}</span>
+                        <span className="text-muted tabular-nums">{row.amount.toLocaleString("ru-RU")} ₽</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface overflow-hidden">
+                        <div className="h-full rounded-full bg-green/70" style={{ width: `${w}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-muted">Расходов пока нет — добавьте первый, чтобы увидеть разбивку.</p>
+            )}
+          </div>
+
+          {/* Quick actions */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              {
+                label: "Добавить фото",
+                icon: Camera,
+                onClick: () => setActiveTab("photos"),
+              },
+              {
+                label: "Добавить расход",
+                icon: DollarSign,
+                onClick: () => setActiveTab("expenses"),
+              },
+              {
+                label: "Комментарий",
+                icon: MessageSquare,
+                onClick: openCommentOnCurrent,
+              },
+              {
+                label: "Отчёт PDF",
+                icon: FileText,
+                onClick: handleExportReport,
+              },
+            ].map(({ label, icon: Icon, onClick }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={onClick}
+                className="flex items-center gap-3 rounded-[14px] border border-line bg-white px-4 py-3.5 text-left hover:bg-surface transition-colors shadow-[0_4px_16px_rgba(23,63,52,0.04)]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-cream text-orange shrink-0">
+                  <Icon className="w-4 h-4" />
+                </span>
+                <span className="text-sm font-medium text-ink">{label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Recent activity + photos */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-[18px] border border-line bg-white p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold text-ink">Последняя активность</h2>
+                <button
+                  type="button"
+                  className="text-sm text-orange font-medium hover:underline"
+                  onClick={() => setActiveTab("activity")}
+                >
+                  Журнал
+                </button>
+              </div>
+              {(project.timeline_entries?.length ?? 0) > 0 ? (
+                <ul className="space-y-3">
+                  {project.timeline_entries!.slice(0, 5).map((entry, i) => (
+                    <li key={`${entry.created_at}-${i}`} className="flex gap-3 text-sm">
+                      <span className="text-ink-subtle shrink-0 w-[4.5rem]">
+                        {format(new Date(entry.created_at), "d MMM", { locale: ru })}
+                      </span>
+                      <span className="text-muted min-w-0">
+                        {formatActivityDetails(entry.details) || "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : project.last_activity ? (
+                <div className="text-sm">
+                  <p className="text-ink-subtle">
+                    {format(new Date(project.last_activity.created_at), "d MMM, HH:mm", { locale: ru })}
+                  </p>
+                  <p className="mt-1 text-muted">
+                    {formatActivityDetails(project.last_activity.details) || "Обновление объекта"}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted py-4">Пока нет записей активности</p>
+              )}
+            </div>
+
+            <div className="rounded-[18px] border border-line bg-white p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold text-ink">Последние фото</h2>
+                <button
+                  type="button"
+                  className="text-sm text-orange font-medium hover:underline"
+                  onClick={() => setActiveTab("photos")}
+                >
+                  Все фото
+                </button>
+              </div>
+              {overviewPhotos.length > 0 ? (
+                <div className="grid grid-cols-4 gap-2">
+                  {overviewPhotos.map((photo) => (
+                    <button
+                      key={photo.id}
+                      type="button"
+                      onClick={() => setActiveTab("photos")}
+                      className="aspect-square rounded-[10px] overflow-hidden bg-surface"
+                    >
+                      {photo.file_path.startsWith("/placeholder") ? (
+                        <div className="w-full h-full flex items-center justify-center text-ink-subtle">
+                          <Camera className="w-5 h-5" />
+                        </div>
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={photo.file_path}
+                          alt={photo.comment || "Фото"}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted py-4">Фото ещё не загружены</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "stages" && renderStagesList()}
 
       {activeTab === "photos" && (
         <ProjectPhotosSection
@@ -905,627 +1443,7 @@ export default function ProjectPage() {
         />
       )}
 
-      {activeTab === "activity" && (
-        <ProjectActivitySection projectId={project.id} />
-      )}
+      {activeTab === "activity" && <ProjectActivitySection projectId={project.id} />}
     </div>
-  );
-}
-
-function ProjectPhotosSection({
-  projectId,
-  stages,
-  photoStageId,
-  setPhotoStageId,
-  photoComment,
-  setPhotoComment,
-  fileInputRef,
-  handlePhotoUpload,
-  uploadingPhoto,
-  refetch,
-}: {
-  projectId: number;
-  stages: { id: number; name: string }[];
-  photoStageId: string;
-  setPhotoStageId: (v: string) => void;
-  photoComment: string;
-  setPhotoComment: (v: string) => void;
-  fileInputRef: React.RefObject<HTMLInputElement | null>;
-  handlePhotoUpload: (file: File) => Promise<void> | void;
-  uploadingPhoto: boolean;
-  refetch: () => void;
-}) {
-  const [photos, setPhotos] = useState<{
-    id: number;
-    file_path: string;
-    comment: string | null;
-    created_at: string;
-    stage_id: number | null;
-  }[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [activePhoto, setActivePhoto] = useState<
-    { id: number; file_path: string; comment: string | null; created_at: string; stage_id: number | null } | null
-  >(null);
-  const [editingPhotoId, setEditingPhotoId] = useState<number | null>(null);
-  const [editPhotoComment, setEditPhotoComment] = useState("");
-  const [savingPhoto, setSavingPhoto] = useState(false);
-
-  const loadPhotos = () => {
-    fetch(`/api/projects/${projectId}/photos`)
-      .then((r) => r.json())
-      .then(setPhotos);
-  };
-
-  useEffect(() => {
-    loadPhotos();
-  }, [projectId, refetch]);
-
-  return (
-    <Card>
-      <CardHeader className="space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <h2 className="font-semibold text-ink">Фото-отчёты</h2>
-          <Button
-            type="button"
-            onClick={() => setIsAdding((v) => !v)}
-            variant={isAdding ? "secondary" : "primary"}
-            size="lg"
-            className="touch-target w-full sm:w-auto sm:ml-auto"
-          >
-            {isAdding ? "Отмена" : "Добавить фото"}
-          </Button>
-        </div>
-        {isAdding && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                ref={fileInputRef as React.RefObject<HTMLInputElement>}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  setSelectedFile(file);
-                }}
-              />
-              <Button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingPhoto}
-                size="lg"
-                className="touch-target w-full sm:w-auto"
-              >
-                {uploadingPhoto ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <>
-                    <Camera className="w-5 h-5 mr-2" />
-                    Выбрать фото
-                  </>
-                )}
-              </Button>
-              <span className="text-xs text-ink-muted truncate max-w-xs">
-                {selectedFile ? selectedFile.name : "Файл не выбран"}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                value={photoStageId}
-                onChange={(e) => setPhotoStageId(e.target.value)}
-                className="w-full sm:w-48"
-              >
-                <option value="">Этап не выбран</option>
-                {stages.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-              <Input
-                placeholder="Комментарий к фото"
-                value={photoComment}
-                onChange={(e) => setPhotoComment(e.target.value)}
-                className="w-full sm:flex-1"
-              />
-              <Button
-                type="button"
-                onClick={async () => {
-                  if (!selectedFile) {
-                    alert("Выберите фото");
-                    return;
-                  }
-                  await handlePhotoUpload(selectedFile);
-                  setSelectedFile(null);
-                  setPhotoStageId("");
-                  setPhotoComment("");
-                  setIsAdding(false);
-                  loadPhotos();
-                }}
-                disabled={uploadingPhoto}
-                size="lg"
-                className="touch-target w-full sm:w-auto"
-              >
-                {uploadingPhoto ? <Loader2 className="w-5 h-5 animate-spin" /> : "Добавить"}
-              </Button>
-            </div>
-          </div>
-        )}
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {photos.map((photo) => (
-            <div
-              key={photo.id}
-              className="aspect-square rounded-lg overflow-hidden bg-surface-muted flex flex-col cursor-pointer relative"
-              onClick={() => setActivePhoto(photo)}
-            >
-              <div className="flex-1 w-full relative">
-                {photo.file_path.startsWith("/placeholder") ? (
-                  <div className="w-full h-full flex items-center justify-center text-ink-subtle text-4xl">
-                    📷
-                  </div>
-                ) : (
-                  <img
-                    src={photo.file_path}
-                    alt={photo.comment || "Фото объекта"}
-                    className="w-full h-full object-cover"
-                  />
-                )}
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/50 rounded-lg p-1">
-                  <button
-                    type="button"
-                    className="p-1.5 rounded text-white hover:bg-white/20"
-                    title="Редактировать описание"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingPhotoId(photo.id);
-                      setEditPhotoComment(photo.comment || "");
-                    }}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    className="p-1.5 rounded text-white hover:bg-red-500/80"
-                    title="Удалить фото"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (!window.confirm("Удалить это фото?")) return;
-                      await fetch(`/api/projects/${projectId}/photos`, {
-                        method: "DELETE",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ photoId: photo.id }),
-                      });
-                      loadPhotos();
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              {editingPhotoId === photo.id ? (
-                <div className="p-2 bg-white border-t flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
-                  <Input
-                    value={editPhotoComment}
-                    onChange={(e) => setEditPhotoComment(e.target.value)}
-                    placeholder="Описание фото"
-                    className="text-xs min-h-0 py-1.5"
-                  />
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      className="flex-1 py-1 text-xs"
-                      disabled={savingPhoto}
-                      onClick={async () => {
-                        setSavingPhoto(true);
-                        await fetch(`/api/projects/${projectId}/photos`, {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ photoId: photo.id, comment: editPhotoComment.trim() || null }),
-                        });
-                        setSavingPhoto(false);
-                        setEditingPhotoId(null);
-                        loadPhotos();
-                      }}
-                    >
-                      {savingPhoto ? <Loader2 className="w-3 h-3 animate-spin" /> : "Сохранить"}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="py-1 text-xs" onClick={() => { setEditingPhotoId(null); }} disabled={savingPhoto}>
-                      Отмена
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <p className="p-2 text-xs text-ink-muted bg-white border-t line-clamp-2 min-h-[3rem]">
-                  {photo.comment || "Без описания"}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-        {photos.length === 0 && (
-          <p className="text-center text-ink-muted py-8">Пока нет загруженных фото</p>
-        )}
-
-        {activePhoto && (
-          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                <span className="text-sm text-ink-muted">Фото объекта</span>
-                <button
-                  className="text-ink-muted hover:text-ink text-sm"
-                  onClick={() => setActivePhoto(null)}
-                >
-                  Закрыть
-                </button>
-              </div>
-              <div className="flex-1 overflow-auto bg-black flex items-center justify-center">
-                {activePhoto.file_path.startsWith("/placeholder") ? (
-                  <div className="w-full h-full flex items-center justify-center text-white text-6xl">
-                    📷
-                  </div>
-                ) : (
-                  <img
-                    src={activePhoto.file_path}
-                    alt={activePhoto.comment || "Фото объекта"}
-                    className="max-w-full max-h-[70vh] object-contain"
-                  />
-                )}
-              </div>
-              <div className="px-4 py-3 border-t border-border flex items-center justify-between gap-3">
-                <div className="text-sm text-ink-muted truncate">
-                  {activePhoto.comment || "Без описания"}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-red-600"
-                    onClick={async () => {
-                      const confirmed = window.confirm("Удалить это фото?");
-                      if (!confirmed) return;
-                      await fetch(`/api/projects/${projectId}/photos`, {
-                        method: "DELETE",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ photoId: activePhoto.id }),
-                      });
-                      setActivePhoto(null);
-                      loadPhotos();
-                    }}
-                  >
-                    Удалить фото
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setActivePhoto(null)}
-                  >
-                    Закрыть
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ProjectExpensesSection({
-  projectId,
-  reloadKey,
-  expenseDate,
-  setExpenseDate,
-  expenseCategory,
-  setExpenseCategory,
-  expenseDesc,
-  setExpenseDesc,
-  expenseAmount,
-  setExpenseAmount,
-  handleAddExpense,
-  addingExpense,
-  refetch,
-}: {
-  projectId: number;
-  reloadKey: number;
-  expenseDate: string;
-  setExpenseDate: (v: string) => void;
-  expenseCategory: string;
-  setExpenseCategory: (v: string) => void;
-  expenseDesc: string;
-  setExpenseDesc: (v: string) => void;
-  expenseAmount: string;
-  setExpenseAmount: (v: string) => void;
-  handleAddExpense: () => void;
-  addingExpense: boolean;
-  refetch: () => void;
-}) {
-  const [data, setData] = useState<{
-    expenses: { id: number; date: string; category: string; description: string | null; amount: number }[];
-    total_spent: number;
-    budget: number;
-    budget_remaining: number;
-  } | null>(null);
-  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
-  const [editDate, setEditDate] = useState("");
-  const [editCategory, setEditCategory] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editAmount, setEditAmount] = useState("");
-  const [savingExpense, setSavingExpense] = useState(false);
-  const [expenseSearch, setExpenseSearch] = useState("");
-  const [expenseFilterCategory, setExpenseFilterCategory] = useState("");
-  const [expenseSort, setExpenseSort] = useState<"date_desc" | "date_asc" | "amount_desc" | "amount_asc" | "category">("date_desc");
-
-  const loadExpenses = () => {
-    fetch(`/api/projects/${projectId}/expenses`)
-      .then((r) => r.json())
-      .then(setData);
-  };
-
-  useEffect(() => {
-    loadExpenses();
-  }, [projectId, reloadKey]);
-
-  const filteredAndSortedExpenses = data
-    ? (() => {
-        let list = [...data.expenses];
-        const q = expenseSearch.trim().toLowerCase();
-        const amountQuery = expenseSearch.trim().replace(/\s/g, "");
-        if (q) {
-          list = list.filter(
-            (e) =>
-              e.category.toLowerCase().includes(q) ||
-              (e.description || "").toLowerCase().includes(q) ||
-              (amountQuery && String(e.amount).includes(amountQuery))
-          );
-        }
-        if (expenseFilterCategory) {
-          list = list.filter((e) => e.category === expenseFilterCategory);
-        }
-        if (expenseSort === "date_desc") list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        else if (expenseSort === "date_asc") list.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        else if (expenseSort === "amount_desc") list.sort((a, b) => b.amount - a.amount);
-        else if (expenseSort === "amount_asc") list.sort((a, b) => a.amount - b.amount);
-        else if (expenseSort === "category") list.sort((a, b) => a.category.localeCompare(b.category));
-        return list;
-      })()
-    : [];
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-col gap-4">
-        <h2 className="font-semibold text-ink">Учёт расходов</h2>
-        <div className="flex flex-wrap gap-2">
-          <Input
-            type="date"
-            value={expenseDate}
-            onChange={(e) => setExpenseDate(e.target.value)}
-            className="w-full sm:w-40"
-          />
-          <Select
-            value={expenseCategory}
-            onChange={(e) => setExpenseCategory(e.target.value)}
-            className="w-full sm:w-36"
-          >
-            {EXPENSE_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </Select>
-          <Input
-            placeholder="Описание"
-            value={expenseDesc}
-            onChange={(e) => setExpenseDesc(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            type="text"
-            inputMode="numeric"
-            placeholder="Сумма"
-            value={expenseAmount}
-            onChange={(e) => setExpenseAmount(formatThousands(e.target.value))}
-            className="w-full sm:w-28"
-          />
-          <Button onClick={handleAddExpense} disabled={addingExpense || !expenseAmount} size="lg">
-            {addingExpense ? <Loader2 className="w-5 h-5 animate-spin" /> : "Добавить"}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {data && (
-          <>
-            <div className="flex flex-wrap gap-4 mb-4 text-sm">
-              <span>Бюджет: <strong>{data.budget.toLocaleString("ru-RU")} ₽</strong></span>
-              <span>Потрачено: <strong>{data.total_spent.toLocaleString("ru-RU")} ₽</strong></span>
-              <span className={data.budget_remaining < 0 ? "text-red-600" : ""}>
-                Остаток: <strong>{data.budget_remaining.toLocaleString("ru-RU")} ₽</strong>
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <Input
-                type="search"
-                placeholder="Поиск по категории, описанию, сумме..."
-                value={expenseSearch}
-                onChange={(e) => setExpenseSearch(e.target.value)}
-                className="w-full sm:w-64 max-w-full"
-              />
-              <select
-                value={expenseFilterCategory}
-                onChange={(e) => setExpenseFilterCategory(e.target.value)}
-                className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink min-w-[140px] focus:outline-none focus:ring-2 focus:ring-ink/20"
-              >
-                <option value="">Все категории</option>
-                {EXPENSE_CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-              <select
-                value={expenseSort}
-                onChange={(e) => setExpenseSort(e.target.value as typeof expenseSort)}
-                className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink min-w-[160px] focus:outline-none focus:ring-2 focus:ring-ink/20"
-              >
-                <option value="date_desc">Дата: сначала новые</option>
-                <option value="date_asc">Дата: сначала старые</option>
-                <option value="amount_desc">Сумма: по убыванию</option>
-                <option value="amount_asc">Сумма: по возрастанию</option>
-                <option value="category">По категории</option>
-              </select>
-            </div>
-            <ul className="divide-y divide-border">
-              {filteredAndSortedExpenses.map((exp, i) => (
-                <li key={exp.id ?? i} className="py-3 flex flex-col gap-3">
-                  {editingExpenseId === exp.id ? (
-                    <>
-                      <div className="flex flex-wrap items-end gap-2">
-                        <div>
-                          <label className="block text-xs text-ink-muted mb-0.5">Дата</label>
-                          <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="w-full sm:w-40" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-ink-muted mb-0.5">Категория</label>
-                          <Select value={editCategory} onChange={(e) => setEditCategory(e.target.value)} className="w-full sm:w-36">
-                            {EXPENSE_CATEGORIES.map((c) => (
-                              <option key={c} value={c}>{c}</option>
-                            ))}
-                          </Select>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <label className="block text-xs text-ink-muted mb-0.5">Описание</label>
-                          <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} placeholder="Описание" className="w-full" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-ink-muted mb-0.5">Сумма</label>
-                          <Input type="text" inputMode="numeric" value={editAmount} onChange={(e) => setEditAmount(formatThousands(e.target.value))} className="w-full sm:w-28" />
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          disabled={savingExpense}
-                          onClick={async () => {
-                            const amountNum = parseFormattedNumber(editAmount);
-                            if (!editDate || !editCategory || !amountNum) return;
-                            setSavingExpense(true);
-                            await fetch(`/api/projects/${projectId}/expenses`, {
-                              method: "PATCH",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                expenseId: exp.id,
-                                date: editDate,
-                                category: editCategory,
-                                description: editDesc.trim() || null,
-                                amount: amountNum,
-                              }),
-                            });
-                            setSavingExpense(false);
-                            setEditingExpenseId(null);
-                            loadExpenses();
-                          }}
-                        >
-                          {savingExpense ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                          Сохранить
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setEditingExpenseId(null)} disabled={savingExpense}>
-                          Отмена
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex justify-between items-center gap-3 flex-wrap">
-                      <div>
-                        <p className="font-medium">{exp.category} — {exp.description || "—"}</p>
-                        <p className="text-sm text-ink-muted">
-                          {format(new Date(exp.date), "d MMM yyyy", { locale: ru })}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold whitespace-nowrap">
-                          {exp.amount.toLocaleString("ru-RU")} ₽
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingExpenseId(exp.id);
-                            setEditDate(exp.date);
-                            setEditCategory(exp.category);
-                            setEditDesc(exp.description || "");
-                            setEditAmount(formatThousands(String(exp.amount)));
-                          }}
-                          className="inline-flex items-center gap-1 p-2 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-muted"
-                          title="Редактировать"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-ink-subtle hover:text-red-600"
-                          onClick={async () => {
-                            const confirmed = window.confirm("Удалить этот расход?");
-                            if (!confirmed) return;
-                            await fetch(`/api/projects/${projectId}/expenses`, {
-                              method: "DELETE",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ expenseId: exp.id }),
-                            });
-                            loadExpenses();
-                          }}
-                        >
-                          Удалить
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {data.expenses.length > 0 && filteredAndSortedExpenses.length === 0 && (
-              <p className="text-center text-ink-muted py-4 text-sm">Ничего не найдено. Измените поиск или фильтр.</p>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ProjectActivitySection({ projectId }: { projectId: number }) {
-  const [log, setLog] = useState<{ action_type: string; details: string | null; user_name: string | null; created_at: string }[]>([]);
-  useEffect(() => {
-    fetch(`/api/projects/${projectId}/activity`)
-      .then((r) => r.json())
-      .then(setLog);
-  }, [projectId]);
-
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="font-semibold text-ink">Журнал действий</h2>
-      </CardHeader>
-      <CardContent>
-        <ul className="space-y-3">
-          {log.map((entry, i) => (
-            <li key={i} className="flex gap-3 text-sm">
-              <span className="text-ink-subtle shrink-0">
-                {format(new Date(entry.created_at), "d MMM, HH:mm", { locale: ru })}
-              </span>
-              <span className="text-ink-muted">{formatActivityDetails(entry.details) || entry.action_type}</span>
-              {entry.user_name && (
-                <span className="text-ink-subtle">— {entry.user_name}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-        {log.length === 0 && <p className="text-ink-muted text-sm">Пока нет записей</p>}
-      </CardContent>
-    </Card>
   );
 }
