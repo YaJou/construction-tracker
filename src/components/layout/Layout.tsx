@@ -11,12 +11,15 @@ import {
   HardHat,
   Menu,
   X,
+  LogOut,
 } from "lucide-react";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { canManageSettings } from "@/lib/auth/roles";
 
 const nav = [
   { href: "/dashboard", label: "Дашборд", icon: LayoutDashboard },
   { href: "/reports", label: "Отчёты", icon: FileText },
-  { href: "/settings", label: "Справочники", icon: Settings },
+  { href: "/settings", label: "Справочники", icon: Settings, settingsOnly: true },
 ];
 
 function SidebarNav({
@@ -26,6 +29,10 @@ function SidebarNav({
   pathname: string;
   onNavigate?: () => void;
 }) {
+  const { user, displayName, roleLabel, role, loading, signOut } = useAuth();
+  const initial = (displayName || "П").trim().charAt(0).toUpperCase();
+  const showSettings = canManageSettings(role);
+
   return (
     <>
       <div className="h-14 px-3 border-b border-line flex items-center">
@@ -43,55 +50,70 @@ function SidebarNav({
         </Link>
       </div>
       <nav className="p-2 space-y-0.5 flex-1" aria-label="Основное меню">
-        {nav.map(({ href, label, icon: Icon }) => {
-          const active =
-            pathname === href || (href !== "/" && pathname.startsWith(href));
-          return (
-            <Link
-              key={href}
-              href={href}
-              onClick={onNavigate}
-              className={cn(
-                "relative flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-sm font-medium transition-colors duration-fast touch-target",
-                active
-                  ? "bg-cream text-green"
-                  : "text-muted hover:bg-surface hover:text-ink"
-              )}
-            >
-              {active && (
-                <span
-                  className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-orange"
-                  aria-hidden
-                />
-              )}
-              <Icon className="w-[18px] h-[18px] shrink-0" aria-hidden />
-              {label}
-            </Link>
-          );
-        })}
+        {nav
+          .filter((item) => !item.settingsOnly || showSettings)
+          .map(({ href, label, icon: Icon }) => {
+            const active =
+              pathname === href || (href !== "/" && pathname.startsWith(href));
+            return (
+              <Link
+                key={href}
+                href={href}
+                onClick={onNavigate}
+                className={cn(
+                  "relative flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-sm font-medium transition-colors duration-fast touch-target",
+                  active
+                    ? "bg-cream text-green"
+                    : "text-muted hover:bg-surface hover:text-ink"
+                )}
+              >
+                {active && (
+                  <span
+                    className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-orange"
+                    aria-hidden
+                  />
+                )}
+                <Icon className="w-[18px] h-[18px] shrink-0" aria-hidden />
+                {label}
+              </Link>
+            );
+          })}
       </nav>
       <div className="mt-auto border-t border-line p-3">
-        <div className="mb-2 px-1">
-          <p className="text-sm font-semibold text-ink">Аккаунт</p>
-          <p className="text-caption text-muted">
-            Авторизация подключается. Пока доступ открыт для команды.
-          </p>
+        <div className="flex items-center gap-2.5 mb-2 px-1">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-green/10 text-green text-sm font-semibold">
+            {loading ? "…" : initial}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-ink truncate">
+              {loading ? "Загрузка…" : displayName}
+            </p>
+            <p className="text-caption text-muted truncate">
+              {user ? `Роль: ${roleLabel}` : "Не выполнен вход"}
+            </p>
+          </div>
+        </div>
+        {user ? (
+          <button
+            type="button"
+            onClick={() => {
+              onNavigate?.();
+              signOut();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 rounded-[10px] text-sm font-medium text-muted hover:bg-surface hover:text-ink transition-colors touch-target min-h-[42px]"
+          >
+            <LogOut className="w-4 h-4" aria-hidden />
+            Выйти
+          </button>
+        ) : (
           <Link
             href="/login"
             onClick={onNavigate}
-            className="mt-2 inline-flex h-[42px] items-center rounded-[10px] border border-line px-3 text-sm font-medium text-ink hover:bg-surface"
+            className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-sm font-medium text-muted hover:bg-surface hover:text-ink transition-colors touch-target min-h-[42px]"
           >
             Войти
           </Link>
-        </div>
-        <Link
-          href="/settings"
-          onClick={onNavigate}
-          className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-sm font-medium text-muted hover:bg-surface hover:text-ink transition-colors touch-target min-h-[42px]"
-        >
-          <Settings className="w-4 h-4" aria-hidden />
-          Настройки
-        </Link>
+        )}
       </div>
     </>
   );
@@ -100,6 +122,7 @@ function SidebarNav({
 export function Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicHome = pathname === "/";
+  const isLogin = pathname === "/login";
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -113,18 +136,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, [drawerOpen]);
 
-  if (isPublicHome) {
+  if (isPublicHome || isLogin) {
     return <div className="min-h-screen bg-page text-ink">{children}</div>;
   }
 
   return (
     <div className="min-h-screen flex bg-surface text-ink">
-      {/* Desktop sidebar */}
       <aside className="hidden min-[901px]:flex w-[232px] min-h-screen border-r border-line bg-white shrink-0 flex-col sticky top-0 h-screen">
         <SidebarNav pathname={pathname} />
       </aside>
 
-      {/* Mobile top bar */}
       <div className="min-[901px]:hidden fixed top-0 inset-x-0 z-40 h-14 border-b border-line bg-white flex items-center gap-3 px-4">
         <button
           type="button"
@@ -143,7 +164,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </Link>
       </div>
 
-      {/* Mobile drawer */}
       {drawerOpen && (
         <div className="min-[901px]:hidden fixed inset-0 z-50">
           <button

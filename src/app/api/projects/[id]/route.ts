@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +8,8 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
@@ -94,6 +97,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
@@ -149,7 +154,7 @@ export async function PATCH(
       entity_type: "project",
       entity_id: id,
       details: "Обновлена информация по проекту",
-      user_name: (body.manager as string) || null,
+      user_name: actorName(auth.ctx),
     });
 
     return NextResponse.json({ ok: true });

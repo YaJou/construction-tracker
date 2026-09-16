@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,8 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
     const [{ data: expenses, error: expensesError }, { data: project }] =
@@ -50,6 +53,8 @@ export async function GET(
 }
 
 export async function POST(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectIdFromUrl(request);
     if (!projectId) {
@@ -61,6 +66,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Укажите дату, категорию и сумму" }, { status: 400 });
     }
 
+    const addedBy = added_by || actorName(auth.ctx);
+
     const { data: inserted, error: insertError } = await supabase
       .from("expenses")
       .insert({
@@ -69,7 +76,7 @@ export async function POST(request: Request) {
         category: String(category),
         description: description || null,
         amount: Number(amount),
-        added_by: added_by || null,
+        added_by: addedBy,
       })
       .select("id")
       .single();
@@ -85,7 +92,7 @@ export async function POST(request: Request) {
       entity_type: "expense",
       entity_id: inserted.id,
       details: `Добавлен расход: ${category} — ${amount} ₽`,
-      user_name: added_by || null,
+      user_name: addedBy,
     });
 
     return NextResponse.json({ id: inserted.id });
@@ -96,6 +103,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectIdFromUrl(request);
     if (!projectId) {
@@ -145,7 +154,7 @@ export async function PATCH(request: Request) {
       entity_type: "expense",
       entity_id: expenseId,
       details: "Обновлён расход",
-      user_name: null,
+      user_name: actorName(auth.ctx),
     });
 
     return NextResponse.json({ ok: true });
@@ -156,6 +165,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectIdFromUrl(request);
     if (!projectId) {
@@ -195,7 +206,7 @@ export async function DELETE(request: Request) {
       entity_type: "expense",
       entity_id: expenseId,
       details: `Удалён расход: ${toDelete.category} — ${toDelete.amount} ₽`,
-      user_name: null,
+      user_name: actorName(auth.ctx),
     });
 
     return NextResponse.json({ ok: true });

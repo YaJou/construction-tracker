@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ function getProjectIdFromUrl(url: string): number {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });
@@ -53,6 +56,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });
@@ -80,6 +85,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = getProjectIdFromUrl(request.url);
     if (!projectId) return NextResponse.json({ error: "Некорректный ID проекта" }, { status: 400 });

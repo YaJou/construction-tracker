@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { HardHat, Loader2 } from "lucide-react";
+import { Suspense } from "react";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next") || "/dashboard";
   const [mode, setMode] = useState<"login" | "register" | "reset">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,6 +24,7 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     setMessage("");
+    const supabase = createBrowserSupabase();
     try {
       if (mode === "reset") {
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
@@ -32,7 +36,7 @@ export default function LoginPage() {
       }
 
       if (mode === "register") {
-        const { error: signUpError } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -40,7 +44,14 @@ export default function LoginPage() {
           },
         });
         if (signUpError) throw signUpError;
-        setMessage("Проверьте почту для подтверждения, затем войдите.");
+
+        // If email confirmation is off, session exists → go in
+        if (data.session) {
+          router.replace(next.startsWith("/") ? next : "/dashboard");
+          router.refresh();
+          return;
+        }
+        setMessage("Аккаунт создан. Если нужно подтверждение почты — проверьте письмо, затем войдите.");
         setMode("login");
         return;
       }
@@ -50,7 +61,7 @@ export default function LoginPage() {
         password,
       });
       if (signInError) throw signInError;
-      router.push("/dashboard");
+      router.replace(next.startsWith("/") ? next : "/dashboard");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось выполнить действие");
@@ -72,7 +83,7 @@ export default function LoginPage() {
               {mode === "register" && "Регистрация"}
               {mode === "reset" && "Сброс пароля"}
             </h1>
-            <p className="text-caption text-muted">СтройУчёт · Supabase Auth</p>
+            <p className="text-caption text-muted">СтройУчёт · защищённый доступ</p>
           </div>
         </div>
 
@@ -156,11 +167,23 @@ export default function LoginPage() {
               </button>
             </>
           )}
-          <Link href="/dashboard" className="block hover:text-ink">
-            Продолжить без входа →
+          <Link href="/" className="block hover:text-ink">
+            ← На главную
           </Link>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[70vh] flex items-center justify-center text-muted">Загрузка…</div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

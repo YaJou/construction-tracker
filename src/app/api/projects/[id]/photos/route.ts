@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,8 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
     const { data, error } = await supabase
@@ -37,6 +40,8 @@ export async function GET(
 }
 
 export async function POST(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectId(request);
     if (!projectId) {
@@ -46,7 +51,8 @@ export async function POST(request: Request) {
     const file = formData.get("file") as File | null;
     const stageId = formData.get("stageId");
     const comment = (formData.get("comment") as string) || null;
-    const uploadedBy = (formData.get("uploadedBy") as string) || null;
+    const uploadedBy =
+      (formData.get("uploadedBy") as string) || actorName(auth.ctx);
 
     let filePath = "";
     if (file && file.size > 0) {
@@ -99,6 +105,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectId(request);
     if (!projectId) {
@@ -136,7 +144,7 @@ export async function PATCH(request: Request) {
       entity_type: "photo",
       entity_id: photoId,
       details: "Обновлено описание фото",
-      user_name: null,
+      user_name: actorName(auth.ctx),
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
@@ -146,6 +154,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = await getProjectId(request);
     if (!projectId) {
@@ -173,7 +183,7 @@ export async function DELETE(request: Request) {
       entity_type: "photo",
       entity_id: photoId,
       details: "Удалено фото",
-      user_name: null,
+      user_name: actorName(auth.ctx),
     });
 
     return NextResponse.json({ ok: true });

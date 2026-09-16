@@ -264,7 +264,6 @@ export default function NewProjectPage() {
           if (!file.type.startsWith("image/")) continue; // API фото принимает изображения
           const fd = new FormData();
           fd.set("file", file);
-          fd.set("uploadedBy", "Менеджер");
           if (
             file.name.toLowerCase().includes("план") ||
             file.name.toLowerCase().includes("plan")

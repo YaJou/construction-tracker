@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { DEFAULT_STAGES, PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS } from "@/lib/constants";
+import { requireAuth, requireSettingsAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,8 @@ async function loadSettings() {
 }
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const settings = await loadSettings();
     return NextResponse.json(settings, { headers: { "Cache-Control": "no-store" } });
@@ -102,6 +105,8 @@ async function saveStatusLabels(
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireSettingsAuth();
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json();
 

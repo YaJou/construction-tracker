@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabaseClient";
+import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ function getCityFromAddress(address: string): string {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
@@ -259,6 +262,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json();
     const {
@@ -389,7 +394,7 @@ export async function POST(request: Request) {
       entity_type: "project",
       entity_id: projectId,
       details: "Создан проект",
-      user_name: manager || null,
+      user_name: actorName(auth.ctx),
     });
 
     if (activityError) {

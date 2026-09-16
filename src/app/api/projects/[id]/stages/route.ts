@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,8 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
     const { data, error } = await supabase
@@ -63,6 +66,8 @@ export async function GET(
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireWriteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json();
     const { stageId, projectId, ...updates } = body;
@@ -92,7 +97,7 @@ export async function PATCH(request: Request) {
         entity_type: "stage",
         entity_id: Number(stageId),
         details: formatStageUpdateDetails(toUpdate),
-        user_name: (updates.responsible as string) || null,
+        user_name: actorName(auth.ctx),
       });
     }
     return NextResponse.json({ ok: true });

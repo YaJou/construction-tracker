@@ -332,7 +332,6 @@ export default function ProjectPage() {
     form.set("file", stagePhotoFile);
     form.set("stageId", String(stageId));
     if (stagePhotoComment.trim()) form.set("comment", stagePhotoComment.trim());
-    form.set("uploadedBy", "Менеджер");
     try {
       const res = await fetch(`/api/projects/${project.id}/photos`, { method: "POST", body: form });
       if (res.ok) {
@@ -353,7 +352,6 @@ export default function ProjectPage() {
     form.set("file", file);
     if (photoStageId) form.set("stageId", photoStageId);
     if (photoComment) form.set("comment", photoComment);
-    form.set("uploadedBy", "Менеджер");
     try {
       const res = await fetch(`/api/projects/${project.id}/photos`, {
         method: "POST",
@@ -382,7 +380,6 @@ export default function ProjectPage() {
           category: expenseCategory,
           description: expenseDesc || null,
           amount: numericAmount,
-          added_by: "Менеджер",
         }),
       });
       if (res.ok) {
