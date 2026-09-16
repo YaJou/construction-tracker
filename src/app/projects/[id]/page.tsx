@@ -17,6 +17,7 @@ import { ProjectTeamCard } from "@/components/project/ProjectTeamCard";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { EXPENSE_CATEGORIES } from "@/lib/constants";
 import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
+import { useAuth } from "@/components/auth/AuthProvider";
 import {
   projectStatusLabel,
   stageStatusLabel,
@@ -130,6 +131,7 @@ function CircularProgress({ value, size = 120 }: { value: number; size?: number 
 export default function ProjectPage() {
   const params = useParams();
   const id = Number(params.id);
+  const { displayName } = useAuth();
   const { project: projectLabels, stage: stageLabels } = useStatusLabels();
   const { project, setProject, loading, error, refetch } = useProject(isNaN(id) ? null : id);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -576,7 +578,13 @@ export default function ProjectPage() {
         throw new Error(body.error || "Не удалось сформировать отчёт");
       }
       const data = await res.json();
-      await downloadProjectReportPdf(data, mode);
+      const result = await downloadProjectReportPdf(data, {
+        mode,
+        authorName: displayName || data.author_name,
+      });
+      if (result.warnings.length) {
+        setExportPdfError(`PDF сохранён. Внимание: ${result.warnings.join("; ")}`);
+      }
     } catch (err) {
       setExportPdfError(err instanceof Error ? err.message : "Ошибка создания PDF");
     } finally {

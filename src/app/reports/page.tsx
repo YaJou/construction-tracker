@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useProjects } from "@/hooks/useProjects";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ArrowLeft, FileText, Loader2 } from "lucide-react";
@@ -10,6 +11,7 @@ import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
 
 export default function ReportsPage() {
   const { projects, loading } = useProjects();
+  const { displayName } = useAuth();
   const [generating, setGenerating] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -24,7 +26,13 @@ export default function ReportsPage() {
         throw new Error(body.error || "Не удалось сформировать отчёт");
       }
       const data = await res.json();
-      await downloadProjectReportPdf(data, "full");
+      const result = await downloadProjectReportPdf(data, {
+        mode: "full",
+        authorName: displayName || data.author_name,
+      });
+      if (result.warnings.length) {
+        setError(`PDF сохранён. Внимание: ${result.warnings.join("; ")}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка создания PDF");
     } finally {
@@ -44,7 +52,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-2xl font-semibold text-ink">Отчёты</h1>
           <p className="text-ink-muted text-sm mt-0.5">
-            Скачать PDF-отчёт по объекту для руководителя или клиента
+            Скачать фирменный PDF-отчёт по объекту
           </p>
         </div>
       </div>
