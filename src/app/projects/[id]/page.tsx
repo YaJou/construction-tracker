@@ -118,7 +118,7 @@ export default function ProjectPage() {
   const params = useParams();
   const id = Number(params.id);
   const { project: projectLabels, stage: stageLabels } = useStatusLabels();
-  const { project, loading, error, refetch } = useProject(isNaN(id) ? null : id);
+  const { project, setProject, loading, error, refetch } = useProject(isNaN(id) ? null : id);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [photoStageId, setPhotoStageId] = useState("");
   const [photoComment, setPhotoComment] = useState("");
@@ -158,6 +158,10 @@ export default function ProjectPage() {
   const stagePhotoInputRef = useRef<HTMLInputElement>(null);
   const [addingSubstepStageId, setAddingSubstepStageId] = useState<number | null>(null);
   const [newSubstepName, setNewSubstepName] = useState("");
+  const [skipModal, setSkipModal] = useState<{ substepId: number; name: string } | null>(null);
+  const [skipReason, setSkipReason] = useState("");
+  const [skipSaving, setSkipSaving] = useState(false);
+  const [substepBusyId, setSubstepBusyId] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [stagesInitialized, setStagesInitialized] = useState(false);
@@ -312,55 +316,133 @@ export default function ProjectPage() {
     }
   };
 
-  const toggleSubstep = async (substepId: number, completed: boolean) => {
-    if (!project) return;
-    await fetch(`/api/projects/${project.id}/stages/substeps`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ substepId, completed }),
+  const patchLocalSubstep = (
+    substepId: number,
+    patch: Partial<{
+      completed: boolean;
+      not_required: boolean;
+      skip_reason: string | null;
+      on_review: boolean;
+    }>
+  ) => {
+    setProject((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        stages: prev.stages.map((stage) => ({
+          ...stage,
+          substeps: stage.substeps?.map((sub) =>
+            sub.id === substepId ? { ...sub, ...patch } : sub
+          ),
+        })),
+      };
     });
-    refetch();
   };
 
-  const markSubstepNotRequired = async (substepId: number) => {
-    if (!project) return;
-    const reason = window.prompt("Почему пункт не требуется? (необязательно)") ?? "";
-    await fetch(`/api/projects/${project.id}/stages/substeps`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        substepId,
-        not_required: true,
-        skip_reason: reason.trim() || null,
-      }),
+  const toggleSubstep = async (substepId: number, completed: boolean) => {
+    if (!project || substepBusyId === substepId) return;
+    setSubstepBusyId(substepId);
+    patchLocalSubstep(substepId, {
+      completed,
+      not_required: false,
+      on_review: false,
+      skip_reason: null,
     });
-    refetch();
+    try {
+      const res = await fetch(`/api/projects/${project.id}/stages/substeps`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ substepId, completed }),
+      });
+      if (!res.ok) {
+        await refetch();
+      }
+    } catch {
+      await refetch();
+    } finally {
+      setSubstepBusyId(null);
+    }
+  };
+
+  const openSkipModal = (substepId: number, name: string) => {
+    setSkipModal({ substepId, name });
+    setSkipReason("");
+  };
+
+  const confirmSkipSubstep = async () => {
+    if (!project || !skipModal) return;
+    setSkipSaving(true);
+    const { substepId } = skipModal;
+    const reason = skipReason.trim() || null;
+    patchLocalSubstep(substepId, {
+      not_required: true,
+      completed: false,
+      on_review: false,
+      skip_reason: reason,
+    });
+    setSkipModal(null);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/stages/substeps`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          substepId,
+          not_required: true,
+          skip_reason: reason,
+        }),
+      });
+      if (!res.ok) await refetch();
+    } catch {
+      await refetch();
+    } finally {
+      setSkipSaving(false);
+    }
   };
 
   const markSubstepOnReview = async (substepId: number, on_review: boolean) => {
     if (!project) return;
-    await fetch(`/api/projects/${project.id}/stages/substeps`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ substepId, on_review, completed: false, not_required: false }),
+    patchLocalSubstep(substepId, {
+      on_review,
+      completed: false,
+      not_required: false,
+      skip_reason: null,
     });
-    refetch();
+    try {
+      const res = await fetch(`/api/projects/${project.id}/stages/substeps`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ substepId, on_review, completed: false, not_required: false }),
+      });
+      if (!res.ok) await refetch();
+    } catch {
+      await refetch();
+    }
   };
 
   const restoreSubstep = async (substepId: number) => {
     if (!project) return;
-    await fetch(`/api/projects/${project.id}/stages/substeps`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        substepId,
-        not_required: false,
-        on_review: false,
-        completed: false,
-        skip_reason: null,
-      }),
+    patchLocalSubstep(substepId, {
+      not_required: false,
+      on_review: false,
+      completed: false,
+      skip_reason: null,
     });
-    refetch();
+    try {
+      const res = await fetch(`/api/projects/${project.id}/stages/substeps`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          substepId,
+          not_required: false,
+          on_review: false,
+          completed: false,
+          skip_reason: null,
+        }),
+      });
+      if (!res.ok) await refetch();
+    } catch {
+      await refetch();
+    }
   };
 
   const addSubstep = async (stageId: number) => {
@@ -749,8 +831,13 @@ export default function ProjectPage() {
                                   <input
                                     type="checkbox"
                                     checked={!!sub.completed}
-                                    disabled={!!sub.not_required}
-                                    onChange={() => toggleSubstep(sub.id, !sub.completed)}
+                                    disabled={!!sub.not_required || substepBusyId === sub.id}
+                                    onChange={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void toggleSubstep(sub.id, !sub.completed);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
                                     className="mt-0.5 rounded border-line text-green"
                                   />
                                   <div className="min-w-0 flex-1">
@@ -794,7 +881,7 @@ export default function ProjectPage() {
                                       <button
                                         type="button"
                                         className="text-[11px] text-muted hover:text-ink"
-                                        onClick={() => markSubstepNotRequired(sub.id)}
+                                        onClick={() => openSkipModal(sub.id, sub.name)}
                                       >
                                         Не требуется
                                       </button>
@@ -1637,6 +1724,60 @@ export default function ProjectPage() {
       )}
 
       {activeTab === "activity" && <ProjectActivitySection projectId={project.id} />}
+
+      {skipModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skip-substep-title"
+          onClick={() => !skipSaving && setSkipModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-[18px] border border-line bg-white p-5 shadow-soft"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="skip-substep-title" className="text-lg font-semibold text-ink">
+              Не требуется
+            </h3>
+            <p className="mt-1 text-sm text-muted">
+              «{skipModal.name}» будет исключён из работ. Можно указать причину.
+            </p>
+            <label className="mt-4 block text-sm font-medium text-ink" htmlFor="skip-reason">
+              Причина <span className="font-normal text-muted">(необязательно)</span>
+            </label>
+            <Input
+              id="skip-reason"
+              value={skipReason}
+              onChange={(e) => setSkipReason(e.target.value)}
+              placeholder="Например: не входит в договор"
+              className="mt-1.5"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void confirmSkipSubstep();
+                if (e.key === "Escape") setSkipModal(null);
+              }}
+            />
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button
+                variant="ghost"
+                disabled={skipSaving}
+                onClick={() => setSkipModal(null)}
+              >
+                Отмена
+              </Button>
+              <Button
+                className="bg-orange hover:bg-orange/90 text-white border-0"
+                disabled={skipSaving}
+                onClick={() => void confirmSkipSubstep()}
+              >
+                {skipSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Подтвердить
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

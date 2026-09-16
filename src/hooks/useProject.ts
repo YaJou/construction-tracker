@@ -56,19 +56,23 @@ export function useProject(id: number | null) {
   const [loading, setLoading] = useState(!!id);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProject = useCallback(async () => {
+  const fetchProject = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id) return;
-    setLoading(true);
-    setError(null);
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const res = await fetch(`/api/projects/${id}`);
+      const res = await fetch(`/api/projects/${id}`, { cache: "no-store" });
       if (!res.ok) throw new Error("Проект не найден");
       const json = await res.json();
       setProject(json);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка");
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : "Ошибка");
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [id]);
 
@@ -76,5 +80,7 @@ export function useProject(id: number | null) {
     fetchProject();
   }, [fetchProject]);
 
-  return { project, loading, error, refetch: fetchProject };
+  const refetch = useCallback(() => fetchProject({ silent: true }), [fetchProject]);
+
+  return { project, setProject, loading, error, refetch, reload: () => fetchProject() };
 }
