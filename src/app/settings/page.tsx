@@ -119,7 +119,7 @@ export default function SettingsPage() {
         Object.fromEntries(updated.stage_statuses.map((s) => [s.key, s.label]))
       );
       setOkMessage("Сохранено");
-      window.setTimeout(() => setOkMessage(""), 2000);
+      window.setTimeout(() => setOkMessage(""), 2500);
     } catch {
       setError("Ошибка сети при сохранении");
     } finally {
@@ -253,19 +253,50 @@ export default function SettingsPage() {
             Этапы, прорабы, статусы — варианты для выбора в объектах
           </p>
         </div>
-        {saving && (
-          <span className="inline-flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="w-4 h-4 animate-spin" /> Сохранение…
-          </span>
-        )}
-        {okMessage && !saving && (
-          <span className="text-sm font-medium text-green">{okMessage}</span>
-        )}
       </div>
 
-      {error && (
-        <div className="rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+      {(saving || okMessage || error) && (
+        <div
+          className={
+            error
+              ? "rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+              : okMessage
+                ? "rounded-[14px] border border-green/20 bg-green/5 px-4 py-3 text-sm font-medium text-green"
+                : "rounded-[14px] border border-line bg-surface px-4 py-3 text-sm text-muted inline-flex items-center gap-2"
+          }
+          role="status"
+          aria-live="polite"
+        >
+          {saving && (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" /> Сохранение…
+            </>
+          )}
+          {!saving && okMessage}
+          {!saving && error}
+        </div>
+      )}
+
+      {/* Always-visible toast near viewport bottom when editing long page */}
+      {(saving || okMessage) && (
+        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 px-4 w-[min(92vw,360px)] pointer-events-none">
+          <div
+            className={
+              okMessage && !saving
+                ? "rounded-[12px] bg-green text-white px-4 py-3 text-sm font-medium text-center shadow-soft"
+                : "rounded-[12px] bg-ink text-white px-4 py-3 text-sm text-center shadow-soft inline-flex w-full items-center justify-center gap-2"
+            }
+            role="status"
+            aria-live="polite"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Сохранение…
+              </>
+            ) : (
+              okMessage
+            )}
+          </div>
         </div>
       )}
 
