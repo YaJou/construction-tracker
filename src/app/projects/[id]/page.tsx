@@ -77,10 +77,11 @@ function dayWord(n: number) {
 
 function CircularProgress({ value, size = 120 }: { value: number; size?: number }) {
   const pct = Math.min(100, Math.max(0, value));
-  const stroke = 8;
+  const stroke = size < 110 ? 7 : 8;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const offset = c - (pct / 100) * c;
+  const compact = size < 110;
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
@@ -107,8 +108,17 @@ function CircularProgress({ value, size = 120 }: { value: number; size?: number 
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold text-ink tabular-nums">{Math.round(pct)}%</span>
-        <span className="text-caption text-muted">готово</span>
+        <span
+          className={cn(
+            "font-bold tabular-nums text-ink",
+            compact ? "text-xl leading-none" : "text-2xl"
+          )}
+        >
+          {Math.round(pct)}%
+        </span>
+        <span className={cn("text-muted", compact ? "mt-0.5 text-[11px]" : "text-caption")}>
+          готово
+        </span>
       </div>
     </div>
   );
@@ -1112,19 +1122,19 @@ export default function ProjectPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Header */}
-      <header className="space-y-4">
-        <div className="flex items-start gap-3">
+      <header className="space-y-3">
+        <div className="flex items-start gap-2 sm:gap-3">
           <Link
             href="/dashboard"
-            className="mt-1 p-2 rounded-[10px] hover:bg-surface text-muted hover:text-ink touch-target shrink-0"
-            aria-label="Назад"
+            className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-muted hover:bg-surface hover:text-ink"
+            aria-label="Назад к объектам"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="h-5 w-5" />
           </Link>
           <div className="min-w-0 flex-1">
-            <nav className="flex flex-wrap items-center gap-1.5 text-caption text-muted mb-2">
+            <nav className="mb-1 hidden items-center gap-1.5 text-caption text-muted sm:flex">
               <Link href="/dashboard" className="hover:text-ink">
                 Дашборд
               </Link>
@@ -1132,59 +1142,65 @@ export default function ProjectPage() {
               <Link href="/dashboard" className="hover:text-ink">
                 Объекты
               </Link>
-              <span className="text-ink-subtle">/</span>
-              <span className="text-ink truncate">{project.name}</span>
             </nav>
-            <h1 className="text-2xl md:text-3xl font-bold text-ink tracking-tight">{project.name}</h1>
-            <p className="mt-1 flex items-start gap-1.5 text-muted">
-              <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-orange" />
-              <span>{project.address || "Адрес не указан"}</span>
+            <h1 className="text-lg font-bold leading-snug tracking-tight text-ink sm:text-2xl sm:leading-8 md:text-3xl md:leading-9">
+              {project.name}
+            </h1>
+            <p className="mt-1 flex items-start gap-1.5 text-sm leading-5 text-muted">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-orange" />
+              <span className="line-clamp-2 break-words sm:line-clamp-none">
+                {project.address || "Адрес не указан"}
+              </span>
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <StatusBadge
                 kind="project"
                 status={project.status}
                 label={projectStatusLabel(projectLabels, project.status)}
               />
               {project.manager && (
-                <span className="inline-flex items-center gap-1.5 text-sm text-muted">
-                  <User className="w-4 h-4" />
-                  Ответственный: <span className="text-ink font-medium">{project.manager}</span>
+                <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm text-muted">
+                  <User className="h-4 w-4 shrink-0" />
+                  <span className="truncate">
+                    Ответственный:{" "}
+                    <span className="font-medium text-ink">{project.manager}</span>
+                  </span>
                 </span>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {/* Desktop actions */}
+          <div className="hidden shrink-0 items-center gap-2 md:flex">
             <Button
               variant="secondary"
-              className="shrink-0"
+              size="sm"
               onClick={() => {
                 setActiveTab("overview");
                 startEditingCard();
               }}
             >
-              <Pencil className="w-4 h-4 mr-2" />
+              <Pencil className="mr-1.5 h-4 w-4" />
               Редактировать
             </Button>
-            <Button onClick={() => handleExportReport("full")} variant="secondary" className="shrink-0">
-              <FileText className="w-4 h-4 mr-2" />
+            <Button size="sm" onClick={() => handleExportReport("full")} variant="secondary">
+              <FileText className="mr-1.5 h-4 w-4" />
               Отчёт PDF
             </Button>
             <div className="relative">
               <button
                 type="button"
-                className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[10px] border border-line bg-white text-muted hover:text-ink hover:bg-surface"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-[10px] border border-line bg-white text-muted hover:bg-surface hover:text-ink"
                 aria-label="Меню"
                 onClick={(e) => {
                   e.stopPropagation();
                   setMenuOpen((v) => !v);
                 }}
               >
-                <MoreHorizontal className="w-5 h-5" />
+                <MoreHorizontal className="h-5 w-5" />
               </button>
               {menuOpen && (
                 <div
-                  className="absolute right-0 mt-1 z-20 min-w-[200px] rounded-[12px] border border-line bg-white py-1 shadow-soft"
+                  className="absolute right-0 z-20 mt-1 min-w-[200px] rounded-[12px] border border-line bg-white py-1 shadow-soft"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -1208,29 +1224,96 @@ export default function ProjectPage() {
             </div>
           </div>
         </div>
+
+        {/* Mobile action row */}
+        <div className="flex gap-2 md:hidden">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="min-h-10 flex-1"
+            onClick={() => {
+              setActiveTab("overview");
+              startEditingCard();
+            }}
+          >
+            <Pencil className="mr-1.5 h-4 w-4" />
+            Изменить
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="min-h-10 flex-1"
+            onClick={() => handleExportReport("full")}
+          >
+            <FileText className="mr-1.5 h-4 w-4" />
+            PDF
+          </Button>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-[10px] border border-line bg-white text-muted hover:bg-surface hover:text-ink"
+              aria-label="Меню"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((v) => !v);
+              }}
+            >
+              <MoreHorizontal className="h-5 w-5" />
+            </button>
+            {menuOpen && (
+              <div
+                className="absolute right-0 z-20 mt-1 min-w-[200px] rounded-[12px] border border-line bg-white py-1 shadow-soft"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface"
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    const newArchived = !project.archived;
+                    await fetch(`/api/projects/${project.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ archived: newArchived }),
+                    });
+                    refetch();
+                  }}
+                >
+                  {project.archived ? "Восстановить из архива" : "В архив"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </header>
 
-      {/* Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
+      {/* Tabs — full-width grid on phone so nothing is clipped */}
+      <div className="grid grid-cols-5 gap-1 sm:flex sm:gap-2 sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
         {tabs.map(({ id: tabId, label, icon: Icon }) => (
           <button
             key={tabId}
+            type="button"
             onClick={() => setActiveTab(tabId)}
             className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-[10px] text-sm font-medium whitespace-nowrap touch-target transition-colors",
+              "inline-flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[10px] px-1 py-2 text-[11px] font-medium leading-tight transition-colors sm:shrink-0 sm:flex-row sm:gap-2 sm:px-4 sm:py-2.5 sm:text-sm",
               activeTab === tabId
                 ? "bg-green text-white"
-                : "bg-white border border-line text-muted hover:bg-surface hover:text-ink"
+                : "border border-line bg-white text-muted hover:bg-surface hover:text-ink"
             )}
           >
-            <Icon className={cn("w-4 h-4", activeTab === tabId ? "text-white" : "text-orange")} />
-            {label}
+            <Icon
+              className={cn(
+                "h-4 w-4 shrink-0",
+                activeTab === tabId ? "text-white" : "text-orange"
+              )}
+            />
+            <span className="truncate">{label}</span>
           </button>
         ))}
       </div>
 
       {activeTab === "overview" && (
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
           {isEmptyProject && (
             <div className="rounded-[18px] border border-dashed border-line bg-surface px-5 py-6">
               <p className="font-semibold text-ink">Объект только создан</p>
@@ -1261,11 +1344,16 @@ export default function ProjectPage() {
           )}
 
           {/* Progress + details */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-                <CircularProgress value={project.progress_percent} />
-                <div className="min-w-0 space-y-3 flex-1">
+          <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+            <div className="rounded-[18px] border border-line bg-white p-4 shadow-[0_8px_24px_rgba(23,63,52,0.06)] sm:p-5">
+              <div className="flex items-center gap-4 sm:gap-5">
+                <span className="sm:hidden">
+                  <CircularProgress value={project.progress_percent} size={88} />
+                </span>
+                <span className="hidden sm:inline-flex">
+                  <CircularProgress value={project.progress_percent} size={120} />
+                </span>
+                <div className="min-w-0 flex-1 space-y-2.5 sm:space-y-3">
                   <div>
                     <p className="text-caption font-medium uppercase tracking-wider text-muted">Текущий этап</p>
                     <p className="mt-0.5 font-semibold text-ink">
@@ -1313,8 +1401,8 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
-              <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="rounded-[18px] border border-line bg-white p-4 shadow-[0_8px_24px_rgba(23,63,52,0.06)] sm:p-5">
+              <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4">
                 <h2 className="font-semibold text-ink">Карточка объекта</h2>
                 {!isEditingCard ? (
                   <button
@@ -1322,7 +1410,9 @@ export default function ProjectPage() {
                     onClick={startEditingCard}
                     className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"
                   >
-                    <Pencil className="w-4 h-4" /> Редактировать
+                    <Pencil className="h-4 w-4" />
+                    <span className="hidden sm:inline">Редактировать</span>
+                    <span className="sm:hidden">Изменить</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-2">

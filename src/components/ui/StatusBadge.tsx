@@ -45,7 +45,7 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex h-9 min-w-[7.5rem] items-center justify-center gap-1.5 rounded-full px-3 text-caption font-medium",
+        "inline-flex h-8 max-w-full items-center justify-center gap-1.5 rounded-full px-2.5 text-caption font-medium sm:h-9 sm:px-3",
         tone,
         className
       )}
@@ -55,7 +55,7 @@ export function StatusBadge({
       )}
       {showPause && <Pause className="h-3.5 w-3.5 shrink-0" aria-hidden />}
       {showCheck && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-      <span className="truncate">{label || "—"}</span>
+      <span className="whitespace-nowrap">{label || "—"}</span>
     </span>
   );
 }
