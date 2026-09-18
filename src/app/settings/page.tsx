@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn } from "@/utils/cn";
 import { useStatusLabels } from "@/hooks/useStatusLabels";
+import { LoadingBlock } from "@/components/ui/Loading";
 import {
   defaultStagesWithSubsteps,
   normalizeTemplateStageName,
@@ -32,8 +34,9 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { UsersAccessSection } from "@/components/settings/UsersAccessSection";
 
-type TabId = "stages" | "managers" | "types" | "statuses";
+type TabId = "users" | "stages" | "managers" | "types" | "statuses";
 
 interface SettingSubstep {
   id: number;
@@ -71,6 +74,7 @@ interface SettingsData {
 }
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "users", label: "Пользователи" },
   { id: "stages", label: "Этапы" },
   { id: "managers", label: "Ответственные" },
   { id: "types", label: "Типы объектов" },
@@ -107,8 +111,21 @@ function isSettingsData(value: unknown): value is SettingsData {
 }
 
 export default function SettingsPage() {
+  return (
+    <Suspense fallback={<LoadingBlock label="Загрузка настроек…" />}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
+
+function SettingsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { refresh: refreshLabels } = useStatusLabels();
-  const [tab, setTab] = useState<TabId>("stages");
+  const tabFromUrl = searchParams.get("tab") as TabId | null;
+  const initialTab: TabId =
+    tabFromUrl && TABS.some((t) => t.id === tabFromUrl) ? tabFromUrl : "users";
+  const [tab, setTab] = useState<TabId>(initialTab);
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -238,6 +255,12 @@ export default function SettingsPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [statusesDirty]);
 
+  useEffect(() => {
+    if (tabFromUrl && TABS.some((t) => t.id === tabFromUrl) && tabFromUrl !== tab) {
+      setTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
+
   const switchTab = (next: TabId) => {
     if (next === tab) return;
     if (statusesDirty && tab === "statuses") {
@@ -252,6 +275,7 @@ export default function SettingsPage() {
     }
     setSearch("");
     setTab(next);
+    router.replace(`/settings?tab=${next}`, { scroll: false });
   };
 
   const saveSection = async (section: keyof SettingsData, value: unknown) => {
@@ -427,11 +451,7 @@ export default function SettingsPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted" />
-      </div>
-    );
+    return <LoadingBlock label="Загрузка настроек…" />;
   }
 
   if (!data) {
@@ -514,6 +534,12 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
+
+      {tab === "users" && (
+        <section className="rounded-[18px] border border-line bg-white p-5 md:p-6 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+          <UsersAccessSection />
+        </section>
+      )}
 
       {/* STAGES */}
       {tab === "stages" && (

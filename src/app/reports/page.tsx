@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ArrowLeft, FileText, Loader2 } from "lucide-react";
 import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
+import { SkeletonCards } from "@/components/ui/Loading";
 
 export default function ReportsPage() {
   const { projects, loading } = useProjects();
@@ -64,13 +65,7 @@ export default function ReportsPage() {
       )}
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[1, 2, 3].map((i) => (
-            <Card key={i} className="animate-pulse">
-              <CardContent className="h-24" />
-            </Card>
-          ))}
-        </div>
+        <SkeletonCards count={3} className="sm:grid-cols-2" />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (

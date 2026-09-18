@@ -37,7 +37,13 @@ async function ensureProfile(
     .eq("id", userId)
     .maybeSingle();
 
-  if (data) return mapProfile(data);
+  if (data) {
+    // Best-effort: keep email on profile for admin directory
+    if (email) {
+      void supabase.from("profiles").update({ email }).eq("id", userId).then(() => undefined);
+    }
+    return mapProfile(data);
+  }
 
   if (selectError) {
     console.warn("profiles select:", selectError.message);
@@ -49,6 +55,7 @@ async function ensureProfile(
     .insert({
       id: userId,
       full_name: fullName,
+      email: email || null,
       role: "manager",
       is_active: true,
     })

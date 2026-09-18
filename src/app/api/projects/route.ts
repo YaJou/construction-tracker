@@ -167,94 +167,153 @@ export async function GET(request: Request) {
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
 
-    // 2. Для каждого проекта подтягиваем стадии, фото, расходы, активность
-    const withProgress = await Promise.all(
-      projects.map(async (p) => {
-        const [stagesRes, photosRes, expensesRes, activityRes] =
-          await Promise.all([
-            supabase
-              .from("stages")
-              .select("*")
-              .eq("project_id", p.id)
-              .order("order_index", { ascending: true }),
-            supabase
-              .from("photos")
-              .select("*")
-              .eq("project_id", p.id)
-              .order("created_at", { ascending: true }),
-            supabase
-              .from("expenses")
-              .select("*")
-              .eq("project_id", p.id)
-              .order("created_at", { ascending: true }),
-            supabase
-              .from("activity_log")
-              .select("*")
-              .eq("project_id", p.id)
-              .order("created_at", { ascending: true }),
-          ]);
+    const projectIds = projects.map((p) => p.id);
 
-        const stages = stagesRes.data ?? [];
-        const photos = photosRes.data ?? [];
-        const expenses = expensesRes.data ?? [];
-        const activityLog = activityRes.data ?? [];
+    // 2. Batch related rows (avoids N+1 round-trips)
+    type StageRow = {
+      id: number;
+      project_id: number;
+      status: string;
+      order_index: number;
+      updated_at: string;
+    };
+    type PhotoRow = {
+      project_id: number;
+      file_path: string;
+      thumbnail_url?: string | null;
+      comment: string | null;
+      created_at: string;
+    };
+    type ExpenseRow = { project_id: number; amount: number; created_at: string };
+    type ActivityRow = {
+      project_id: number;
+      details: string | null;
+      created_at: string;
+    };
 
-        const total = stages.length;
-        const completed = stages.filter(
-          (s) => s.status === "completed"
-        ).length;
-        const active = stages.filter(
-          (s) => s.status === "in_progress"
-        ).length;
-        const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+    let allStages: StageRow[] = [];
+    let allPhotos: PhotoRow[] = [];
+    let allExpenses: ExpenseRow[] = [];
+    let allActivity: ActivityRow[] = [];
 
-        const dates: { date: Date; summary?: string }[] = [
-          { date: new Date(p.updated_at), summary: "Обновление проекта" },
-          ...activityLog.map((a) => ({
-            date: new Date(a.created_at),
-            summary: a.details ?? undefined,
-          })),
-          ...photos.map((ph) => ({ date: new Date(ph.created_at) })),
-          ...expenses.map((e) => ({ date: new Date(e.created_at) })),
-          ...stages.map((s) => ({ date: new Date(s.updated_at) })),
-        ].filter((x) => !Number.isNaN(x.date.getTime()));
+    if (projectIds.length > 0) {
+      const [stagesRes, photosRes, expensesRes, activityRes] = await Promise.all([
+        supabase
+          .from("stages")
+          .select("id, project_id, status, order_index, updated_at")
+          .in("project_id", projectIds),
+        supabase
+          .from("photos")
+          .select("project_id, file_path, thumbnail_url, comment, created_at")
+          .in("project_id", projectIds)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("expenses")
+          .select("project_id, amount, created_at")
+          .in("project_id", projectIds),
+        supabase
+          .from("activity_log")
+          .select("project_id, details, created_at")
+          .in("project_id", projectIds)
+          .gte("created_at", new Date(Date.now() - 90 * 86400000).toISOString())
+          .order("created_at", { ascending: false }),
+      ]);
 
-        const lastActivity = dates.length
-          ? dates.reduce((best, cur) => (cur.date > best.date ? cur : best))
-          : null;
-        const last_activity_at = lastActivity?.date.toISOString() ?? null;
-        const last_activity_summary = lastActivity?.summary ?? null;
-        const today_photos_count = photos.filter(
-          (ph) =>
-            new Date(ph.created_at) >= todayStart &&
-            new Date(ph.created_at) < todayEnd
-        ).length;
+      allStages = (stagesRes.data as StageRow[]) ?? [];
+      allPhotos = (photosRes.data as PhotoRow[]) ?? [];
+      // thumbnail_url may be missing on older DBs
+      if (photosRes.error && /thumbnail_url/i.test(photosRes.error.message || "")) {
+        const retry = await supabase
+          .from("photos")
+          .select("project_id, file_path, comment, created_at")
+          .in("project_id", projectIds)
+          .order("created_at", { ascending: false });
+        allPhotos = (retry.data as PhotoRow[]) ?? [];
+      }
+      allExpenses = (expensesRes.data as ExpenseRow[]) ?? [];
+      allActivity = (activityRes.data as ActivityRow[]) ?? [];
+    }
 
-        const total_spent = expenses.reduce(
-          (sum, e) => sum + Number(e.amount),
-          0
-        );
+    const stagesByProject = new Map<number, StageRow[]>();
+    for (const s of allStages) {
+      const list = stagesByProject.get(s.project_id) || [];
+      list.push(s);
+      stagesByProject.set(s.project_id, list);
+    }
+    const photosByProject = new Map<number, PhotoRow[]>();
+    for (const ph of allPhotos) {
+      const list = photosByProject.get(ph.project_id) || [];
+      list.push(ph);
+      photosByProject.set(ph.project_id, list);
+    }
+    const expensesByProject = new Map<number, ExpenseRow[]>();
+    for (const e of allExpenses) {
+      const list = expensesByProject.get(e.project_id) || [];
+      list.push(e);
+      expensesByProject.set(e.project_id, list);
+    }
+    const activityByProject = new Map<number, ActivityRow[]>();
+    for (const a of allActivity) {
+      const list = activityByProject.get(a.project_id) || [];
+      list.push(a);
+      activityByProject.set(a.project_id, list);
+    }
 
-        const preview_photos = photos.slice(0, 2).map((ph) => ({
-          file_path: ph.file_path,
-          comment: ph.comment,
-        }));
+    const withProgress = projects.map((p) => {
+      const stages = (stagesByProject.get(p.id) || []).sort(
+        (a, b) => a.order_index - b.order_index
+      );
+      const photos = photosByProject.get(p.id) || [];
+      const expenses = expensesByProject.get(p.id) || [];
+      const activityLog = activityByProject.get(p.id) || [];
 
-        return {
-          ...p,
-          progress_percent: progress,
-          active_stages: active,
-          total_stages: total,
-          completed_stages: completed,
-          preview_photos,
-          last_activity_at,
-          last_activity_summary,
-          today_photos_count,
-          total_spent,
-          budget_remaining: Number(p.budget) - total_spent,
-        };
-      })
-    );
+      const total = stages.length;
+      const completed = stages.filter((s) => s.status === "completed").length;
+      const active = stages.filter((s) => s.status === "in_progress").length;
+      const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+      const dates: { date: Date; summary?: string }[] = [
+        { date: new Date(p.updated_at), summary: "Обновление проекта" },
+        ...activityLog.map((a) => ({
+          date: new Date(a.created_at),
+          summary: a.details ?? undefined,
+        })),
+        ...photos.map((ph) => ({ date: new Date(ph.created_at) })),
+        ...expenses.map((e) => ({ date: new Date(e.created_at) })),
+        ...stages.map((s) => ({ date: new Date(s.updated_at) })),
+      ].filter((x) => !Number.isNaN(x.date.getTime()));
+
+      const lastActivity = dates.length
+        ? dates.reduce((best, cur) => (cur.date > best.date ? cur : best))
+        : null;
+      const last_activity_at = lastActivity?.date.toISOString() ?? null;
+      const last_activity_summary = lastActivity?.summary ?? null;
+      const today_photos_count = photos.filter(
+        (ph) =>
+          new Date(ph.created_at) >= todayStart && new Date(ph.created_at) < todayEnd
+      ).length;
+
+      const total_spent = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+      const preview_photos = photos.slice(0, 2).map((ph) => ({
+        file_path: ph.thumbnail_url || ph.file_path,
+        comment: ph.comment,
+      }));
+
+      return {
+        ...p,
+        progress_percent: progress,
+        active_stages: active,
+        total_stages: total,
+        completed_stages: completed,
+        preview_photos,
+        last_activity_at,
+        last_activity_summary,
+        today_photos_count,
+        total_spent,
+        budget_remaining: Number(p.budget) - total_spent,
+      };
+    });
 
     withProgress.sort(
       (a, b) =>

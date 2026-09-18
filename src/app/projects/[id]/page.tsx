@@ -55,6 +55,7 @@ import {
   Building2,
   Ruler,
 } from "lucide-react";
+import { LoadingBlock } from "@/components/ui/Loading";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -177,6 +178,7 @@ export default function ProjectPage() {
   const [stagesInitialized, setStagesInitialized] = useState(false);
   const [overviewPhotos, setOverviewPhotos] = useState<OverviewPhoto[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategoryRow[]>([]);
+  const [overviewExtrasLoading, setOverviewExtrasLoading] = useState(false);
   const [cardSettings, setCardSettings] = useState<{
     object_types: { id: number; name: string }[];
     managers: { id: number; name: string }[];
@@ -212,19 +214,20 @@ export default function ProjectPage() {
 
   useEffect(() => {
     if (!project?.id) return;
-    fetch(`/api/projects/${project.id}/photos`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: OverviewPhoto[]) => {
+    let cancelled = false;
+    setOverviewExtrasLoading(true);
+    Promise.all([
+      fetch(`/api/projects/${project.id}/photos`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`/api/projects/${project.id}/expenses`).then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([list, data]) => {
+        if (cancelled) return;
         const sorted = [...(Array.isArray(list) ? list : [])].sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          (a: OverviewPhoto, b: OverviewPhoto) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
         setOverviewPhotos(sorted.slice(0, 4));
-      })
-      .catch(() => setOverviewPhotos([]));
 
-    fetch(`/api/projects/${project.id}/expenses`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
         if (!data?.expenses?.length) {
           setExpenseCategories([]);
           return;
@@ -233,12 +236,23 @@ export default function ProjectPage() {
         for (const e of data.expenses as { category: string; amount: number }[]) {
           map.set(e.category, (map.get(e.category) || 0) + e.amount);
         }
-        const rows = [...map.entries()]
-          .map(([category, amount]) => ({ category, amount }))
-          .sort((a, b) => b.amount - a.amount);
-        setExpenseCategories(rows);
+        setExpenseCategories(
+          [...map.entries()]
+            .map(([category, amount]) => ({ category, amount }))
+            .sort((a, b) => b.amount - a.amount)
+        );
       })
-      .catch(() => setExpenseCategories([]));
+      .catch(() => {
+        if (cancelled) return;
+        setOverviewPhotos([]);
+        setExpenseCategories([]);
+      })
+      .finally(() => {
+        if (!cancelled) setOverviewExtrasLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [project?.id, expensesVersion, project?.total_spent]);
 
   useEffect(() => {
@@ -666,11 +680,7 @@ export default function ProjectPage() {
   };
 
   if (loading || !project) {
-    return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-muted" />
-      </div>
-    );
+    return <LoadingBlock label="Загрузка объекта…" />;
   }
   if (error) {
     return (
@@ -1670,7 +1680,9 @@ export default function ProjectPage() {
               />
             </div>
 
-            {expenseCategories.length > 0 ? (
+            {overviewExtrasLoading ? (
+              <LoadingBlock compact label="Загрузка расходов…" />
+            ) : expenseCategories.length > 0 ? (
               <div className="mt-5 space-y-2">
                 <p className="text-caption font-medium text-muted uppercase tracking-wider">По категориям</p>
                 {expenseCategories.slice(0, 5).map((row) => {
@@ -1792,7 +1804,9 @@ export default function ProjectPage() {
                   Все фото
                 </button>
               </div>
-              {overviewPhotos.length > 0 ? (
+              {overviewExtrasLoading ? (
+                <LoadingBlock compact label="Загрузка фото…" />
+              ) : overviewPhotos.length > 0 ? (
                 <div className="grid grid-cols-4 gap-2">
                   {overviewPhotos.map((photo) => (
                     <button

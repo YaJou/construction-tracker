@@ -1,13 +1,10 @@
 import { Suspense } from "react";
 import DashboardView from "@/components/dashboard/DashboardView";
+import { LoadingBlock } from "@/components/ui/Loading";
 
 export default function DashboardPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-[40vh] items-center justify-center text-muted">Загрузка…</div>
-      }
-    >
+    <Suspense fallback={<LoadingBlock label="Загрузка дашборда…" />}>
       <DashboardView />
     </Suspense>
   );

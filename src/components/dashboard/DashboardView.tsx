@@ -30,6 +30,7 @@ import {
   X,
   Home,
 } from "lucide-react";
+import { LoadingBlock, SkeletonCards } from "@/components/ui/Loading";
 import { differenceInCalendarDays, format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -131,10 +132,13 @@ export default function DashboardPage() {
     spent_in_period: number;
     completed_stages_this_month: number;
     budget: number;
+    active_count: number;
   } | null>(null);
   const [todayData, setTodayData] = useState<{
     projects: { id: number; name: string; highlights: string[] }[];
   } | null>(null);
+  const [todayLoading, setTodayLoading] = useState(true);
+  const [periodLoading, setPeriodLoading] = useState(true);
 
   const { projects, filterOptions, loading, error, refetch } = useProjects(
     listType,
@@ -152,27 +156,20 @@ export default function DashboardPage() {
   }, [objectTypeFromUrl]);
 
   const loadToday = useCallback(() => {
-    fetch(`/api/activity/today?_t=${Date.now()}`, {
+    setTodayLoading(true);
+    return fetch(`/api/activity/today?_t=${Date.now()}`, {
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" },
     })
       .then((r) => r.json())
       .then((data) => setTodayData(data))
-      .catch(() => setTodayData(null));
-  }, []);
-
-  const loadKpi = useCallback(() => {
-    fetch(`/api/projects?list=active&_t=${Date.now()}`, {
-      cache: "no-store",
-      headers: { "Cache-Control": "no-cache" },
-    })
-      .then((r) => r.json())
-      .then((json) => setKpiProjects(json.projects ?? []))
-      .catch(() => setKpiProjects([]));
+      .catch(() => setTodayData(null))
+      .finally(() => setTodayLoading(false));
   }, []);
 
   const loadPeriodStats = useCallback(() => {
-    fetch(`/api/dashboard/kpi?period=${period}&_t=${Date.now()}`, {
+    setPeriodLoading(true);
+    return fetch(`/api/dashboard/kpi?period=${period}&_t=${Date.now()}`, {
       cache: "no-store",
     })
       .then((r) => r.json())
@@ -181,15 +178,16 @@ export default function DashboardPage() {
           spent_in_period: Number(json.spent_in_period) || 0,
           completed_stages_this_month: Number(json.completed_stages_this_month) || 0,
           budget: Number(json.budget) || 0,
+          active_count: Number(json.active_count) || 0,
         })
       )
-      .catch(() => setPeriodStats(null));
+      .catch(() => setPeriodStats(null))
+      .finally(() => setPeriodLoading(false));
   }, [period]);
 
   useEffect(() => {
     loadToday();
-    loadKpi();
-  }, [loadToday, loadKpi, pathname]);
+  }, [loadToday, pathname]);
 
   useEffect(() => {
     loadPeriodStats();
@@ -198,9 +196,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState === "visible") {
-        refetch();
         loadToday();
-        loadKpi();
         loadPeriodStats();
       }
     };
@@ -210,7 +206,17 @@ export default function DashboardPage() {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [refetch, loadToday, loadKpi, loadPeriodStats]);
+  }, [loadToday, loadPeriodStats]);
+
+  // Keep last active list for side panels when switching tabs.
+  useEffect(() => {
+    if (listType === "active" && !loading) {
+      setKpiProjects(projects);
+    }
+  }, [listType, projects, loading]);
+
+  const sidePanelsLoading = listType === "active" ? loading : false;
+  const activityPanelLoading = period === "today" ? todayLoading : sidePanelsLoading;
 
   useEffect(() => {
     const close = () => setMenuOpenId(null);
@@ -258,7 +264,9 @@ export default function DashboardPage() {
 
   const kpi = useMemo(() => {
     const source = kpiProjects;
-    const activeCount = source.length;
+    const activeCount =
+      periodStats?.active_count ??
+      (listType === "active" ? projects.length : source.length);
     const nearest = [...source]
       .filter((p) => p.planned_end_date && p.status !== "completed")
       .sort(
@@ -270,7 +278,7 @@ export default function DashboardPage() {
     const budget = periodStats?.budget ?? source.reduce((s, p) => s + (p.budget ?? 0), 0);
     const completedThisMonth = periodStats?.completed_stages_this_month ?? 0;
     return { activeCount, nearest, spent, budget, completedThisMonth };
-  }, [kpiProjects, periodStats]);
+  }, [kpiProjects, periodStats, listType, projects.length]);
 
   const attentionItems = useMemo(() => {
     const items: {
@@ -421,7 +429,6 @@ export default function DashboardPage() {
       body: JSON.stringify({ archived: true }),
     });
     refetch();
-    loadKpi();
   }
 
   const firstPhotoHref =
@@ -584,27 +591,29 @@ export default function DashboardPage() {
           {
             icon: Building2,
             label: "Активные объекты",
-            value: String(kpi.activeCount),
+            value: periodLoading && !periodStats ? "…" : String(kpi.activeCount),
             hint: "в работе",
           },
           {
             icon: CheckCircle2,
             label: "Готово в этом месяце",
-            value: periodStats ? String(kpi.completedThisMonth) : "…",
+            value: periodLoading || !periodStats ? "…" : String(kpi.completedThisMonth),
             hint: "завершённых этапов",
           },
           {
             icon: CalendarClock,
             label: "Ближайший срок",
-            value: kpi.nearest?.planned_end_date
-              ? format(new Date(kpi.nearest.planned_end_date), "d MMM", { locale: ru })
-              : "нет данных",
-            hint: kpi.nearest?.name ?? "нет объектов со сроком",
+            value: sidePanelsLoading
+              ? "…"
+              : kpi.nearest?.planned_end_date
+                ? format(new Date(kpi.nearest.planned_end_date), "d MMM", { locale: ru })
+                : "нет данных",
+            hint: sidePanelsLoading ? "загрузка…" : kpi.nearest?.name ?? "нет объектов со сроком",
           },
           {
             icon: Wallet,
             label: "Расходы за период",
-            value: periodStats ? formatMoney(kpi.spent) : "…",
+            value: periodLoading || !periodStats ? "…" : formatMoney(kpi.spent),
             hint:
               kpi.budget > 0
                 ? `план ${formatMoney(kpi.budget)} · ${period === "today" ? "сегодня" : period === "7d" ? "7 дней" : "30 дней"}`
@@ -776,14 +785,7 @@ export default function DashboardPage() {
         </div>
 
         {loading ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-64 rounded-[18px] border border-line bg-white animate-pulse"
-              />
-            ))}
-          </div>
+          <SkeletonCards count={3} />
         ) : sortedProjects.length === 0 ? (
           <div className="rounded-[18px] border border-line bg-white px-6 py-12 text-center shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[18px] bg-cream text-orange">
@@ -878,7 +880,9 @@ export default function DashboardPage() {
             <AlertTriangle className="w-4 h-4 text-orange" aria-hidden />
             <h2 className="font-semibold text-ink">Требует внимания</h2>
           </div>
-          {attentionItems.length === 0 ? (
+          {sidePanelsLoading ? (
+            <LoadingBlock compact label="Загрузка…" />
+          ) : attentionItems.length === 0 ? (
             <p className="text-sm text-muted py-6 text-center">Нет данных</p>
           ) : (
             <ul className="space-y-2">
@@ -903,7 +907,9 @@ export default function DashboardPage() {
 
         <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
           <h2 className="font-semibold text-ink mb-4">Последняя активность</h2>
-          {activityFeed.length === 0 ? (
+          {activityPanelLoading ? (
+            <LoadingBlock compact label="Загрузка…" />
+          ) : activityFeed.length === 0 ? (
             <p className="text-sm text-muted py-6 text-center">Нет данных</p>
           ) : (
             <ul className="space-y-3">
@@ -933,7 +939,9 @@ export default function DashboardPage() {
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
           <h2 className="font-semibold text-ink mb-4">Бюджет по объектам</h2>
-          {kpiProjects.length === 0 ? (
+          {sidePanelsLoading ? (
+            <LoadingBlock compact label="Загрузка…" />
+          ) : kpiProjects.length === 0 ? (
             <p className="text-sm text-muted py-6 text-center">Нет данных</p>
           ) : (
             <ul className="space-y-4">
@@ -974,7 +982,9 @@ export default function DashboardPage() {
 
         <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
           <h2 className="font-semibold text-ink mb-4">Ближайшие сроки</h2>
-          {nearestDeadlines.length === 0 ? (
+          {sidePanelsLoading ? (
+            <LoadingBlock compact label="Загрузка…" />
+          ) : nearestDeadlines.length === 0 ? (
             <p className="text-sm text-muted py-6 text-center">Нет данных</p>
           ) : (
             <ul className="space-y-2">

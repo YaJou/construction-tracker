@@ -243,7 +243,12 @@ export async function downloadSmetaPdf(
     rows.forEach((e, idx) => {
       const name = itemName(e);
       const nameLines = doc.splitTextToSize(name, 72) as string[];
-      const rowH = Math.max(6, nameLines.length * 3.8 + 1);
+      const kind = e.kind
+        ? SMETA_KIND_LABELS[e.kind as SmetaItemKind] || e.kind
+        : "";
+      const nameLh = 5;
+      const kindExtra = kind ? 4.5 : 1.5;
+      const rowH = Math.max(7.5, nameLines.length * nameLh + kindExtra);
       if (y + rowH > pageH - BOTTOM) {
         doc.addPage();
         pageSections.push("Смета");
@@ -252,10 +257,10 @@ export async function downloadSmetaPdf(
       }
       if (idx % 2 === 1) {
         doc.setFillColor(C.fill[0], C.fill[1], C.fill[2]);
-        doc.rect(MX, y - 3.5, contentW, rowH, "F");
+        doc.rect(MX, y - 3.8, contentW, rowH + 0.8, "F");
       }
       setFont(false, 9, C.ink);
-      nameLines.forEach((line, li) => doc.text(line, MX + 2, y + li * 3.8));
+      nameLines.forEach((line, li) => doc.text(line, MX + 2, y + li * nameLh));
       doc.text(e.unit || "—", MX + 78, y);
       doc.text(e.quantity != null ? String(e.quantity) : "—", MX + 92, y);
       doc.text(
@@ -264,12 +269,9 @@ export async function downloadSmetaPdf(
         y
       );
       doc.text(money(Number(e.amount)), pageW - MX, y, { align: "right" });
-      const kind = e.kind
-        ? SMETA_KIND_LABELS[e.kind as SmetaItemKind] || e.kind
-        : "";
       if (kind) {
         setFont(false, 7, C.muted);
-        doc.text(kind, MX + 2, y + nameLines.length * 3.8);
+        doc.text(kind, MX + 2, y + nameLines.length * nameLh);
       }
       y += rowH;
     });

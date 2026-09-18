@@ -7,6 +7,7 @@ import { ROLE_LABELS, type AppRole } from "@/lib/auth/roles";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { canManageSettings } from "@/lib/auth/roles";
 import { Loader2, UserPlus, Trash2 } from "lucide-react";
+import { LoadingBlock } from "@/components/ui/Loading";
 
 type Member = {
   id: number;
@@ -59,8 +60,8 @@ export function ProjectTeamCard({ projectId }: { projectId: number }) {
 
   if (loading) {
     return (
-      <div className="rounded-[18px] border border-line bg-white p-5 text-muted text-sm flex items-center gap-2">
-        <Loader2 className="w-4 h-4 animate-spin" /> Команда объекта…
+      <div className="rounded-[18px] border border-line bg-white p-5 shadow-[0_8px_24px_rgba(23,63,52,0.06)]">
+        <LoadingBlock compact label="Команда объекта…" />
       </div>
     );
   }

@@ -25,6 +25,8 @@ export async function GET() {
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
+    const fromIso = todayStart.toISOString();
+    const toIso = todayEnd.toISOString();
 
     const { data: allProjectsRaw, error: projectsError } = await supabase
       .from("projects")
@@ -44,73 +46,108 @@ export async function GET() {
         ? allProjectsRaw
         : allProjectsRaw.filter((p) => accessible.includes(p.id));
 
+    if (allProjects.length === 0) {
+      return NextResponse.json(
+        { projects: [] },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    const projectIds = allProjects.map((p) => p.id);
+    const nameById = new Map(allProjects.map((p) => [p.id, p.name]));
+
+    const [photosRes, stagesRes, expensesRes, activityRes] = await Promise.all([
+      supabase
+        .from("photos")
+        .select("id, project_id, created_at")
+        .in("project_id", projectIds)
+        .gte("created_at", fromIso)
+        .lt("created_at", toIso),
+      supabase
+        .from("stages")
+        .select("project_id, name, status, end_date")
+        .in("project_id", projectIds)
+        .eq("status", "completed")
+        .eq("end_date", today),
+      supabase
+        .from("expenses")
+        .select("id, project_id")
+        .in("project_id", projectIds)
+        .eq("date", today),
+      supabase
+        .from("activity_log")
+        .select("project_id, details, created_at")
+        .in("project_id", projectIds)
+        .gte("created_at", fromIso)
+        .lt("created_at", toIso),
+    ]);
+
+    if (photosRes.error) console.error(photosRes.error);
+    if (stagesRes.error) console.error(stagesRes.error);
+    if (expensesRes.error) console.error(expensesRes.error);
+    if (activityRes.error) console.error(activityRes.error);
+
+    const photoCount = new Map<number, number>();
+    for (const ph of photosRes.data ?? []) {
+      photoCount.set(ph.project_id, (photoCount.get(ph.project_id) || 0) + 1);
+    }
+
+    const stagesByProject = new Map<number, string[]>();
+    for (const s of stagesRes.data ?? []) {
+      const list = stagesByProject.get(s.project_id) || [];
+      list.push(s.name);
+      stagesByProject.set(s.project_id, list);
+    }
+
+    const expenseCount = new Map<number, number>();
+    for (const e of expensesRes.data ?? []) {
+      expenseCount.set(e.project_id, (expenseCount.get(e.project_id) || 0) + 1);
+    }
+
+    const logByProject = new Map<number, string[]>();
+    for (const a of activityRes.data ?? []) {
+      if (!a.details) continue;
+      const list = logByProject.get(a.project_id) || [];
+      list.push(a.details);
+      logByProject.set(a.project_id, list);
+    }
+
     const result: { id: number; name: string; highlights: string[] }[] = [];
 
-    for (const project of allProjects) {
+    for (const id of projectIds) {
       const highlights: string[] = [];
+      const photos = photoCount.get(id) || 0;
+      if (photos > 0) {
+        highlights.push(photos === 1 ? "+1 фото" : `+${photos} фото`);
+      }
 
-      const [photosRes, stagesRes, expensesRes, activityRes] = await Promise.all([
-        supabase
-          .from("photos")
-          .select("id, created_at")
-          .eq("project_id", project.id)
-          .gte("created_at", todayStart.toISOString())
-          .lt("created_at", todayEnd.toISOString()),
-        supabase
-          .from("stages")
-          .select("name, status, end_date")
-          .eq("project_id", project.id)
-          .eq("status", "completed")
-          .eq("end_date", today),
-        supabase
-          .from("expenses")
-          .select("id")
-          .eq("project_id", project.id)
-          .eq("date", today),
-        supabase
-          .from("activity_log")
-          .select("details, created_at")
-          .eq("project_id", project.id)
-          .gte("created_at", todayStart.toISOString())
-          .lt("created_at", todayEnd.toISOString()),
-      ]);
+      for (const name of stagesByProject.get(id) || []) {
+        highlights.push(`этап «${name}» завершён`);
+      }
 
-      const todayPhotos = photosRes.data ?? [];
-      if (todayPhotos.length > 0) {
+      const expenses = expenseCount.get(id) || 0;
+      if (expenses > 0) {
         highlights.push(
-          todayPhotos.length === 1 ? "+1 фото" : `+${todayPhotos.length} фото`
+          expenses === 1 ? "добавлен расход" : `+${expenses} расходов`
         );
       }
 
-      for (const s of stagesRes.data ?? []) {
-        highlights.push(`этап «${s.name}» завершён`);
-      }
-
-      const todayExpenses = expensesRes.data ?? [];
-      if (todayExpenses.length > 0) {
-        highlights.push(
-          todayExpenses.length === 1
-            ? "добавлен расход"
-            : `+${todayExpenses.length} расходов`
-        );
-      }
-
-      const todayLog = activityRes.data ?? [];
-      const hasOtherActivity =
-        todayLog.length > 0 &&
-        todayPhotos.length === 0 &&
-        (stagesRes.data ?? []).length === 0 &&
-        todayExpenses.length === 0;
-      if (hasOtherActivity) {
-        const distinct = todayLog
-          .map((a) => a.details)
-          .filter(Boolean) as string[];
-        const unique = [...new Set(distinct)];
-        for (const d of unique.slice(0, 2)) highlights.push(d);
+      const logs = logByProject.get(id) || [];
+      if (
+        logs.length > 0 &&
+        photos === 0 &&
+        !(stagesByProject.get(id) || []).length &&
+        expenses === 0
+      ) {
+        for (const d of [...new Set(logs)].slice(0, 2)) highlights.push(d);
       }
 
       if (highlights.length > 0) {
-        result.push({ id: project.id, name: project.name, highlights });
+        result.push({
+          id,
+          name: nameById.get(id) || "Объект",
+          highlights,
+        });
       }
     }
 

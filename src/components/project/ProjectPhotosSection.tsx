@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
 import { Loader2, Camera, Pencil, Trash2 } from "lucide-react";
+import { LoadingBlock } from "@/components/ui/Loading";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -46,6 +47,7 @@ export function ProjectPhotosSection({
   refetch: () => void;
 }) {
   const [photos, setPhotos] = useState<PhotoRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -62,9 +64,12 @@ export function ProjectPhotosSection({
   const [savingPhoto, setSavingPhoto] = useState(false);
 
   const loadPhotos = () => {
+    setLoading(true);
     fetch(`/api/projects/${projectId}/photos`)
       .then((r) => r.json())
-      .then((data) => setPhotos(Array.isArray(data) ? data : []));
+      .then((data) => setPhotos(Array.isArray(data) ? data : []))
+      .catch(() => setPhotos([]))
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -230,6 +235,10 @@ export function ProjectPhotosSection({
         )}
       </CardHeader>
       <CardContent>
+        {loading ? (
+          <LoadingBlock compact label="Загрузка фото…" />
+        ) : (
+          <>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {photos.map((photo) => (
             <div
@@ -387,6 +396,8 @@ export function ProjectPhotosSection({
               </div>
             </div>
           </div>
+        )}
+          </>
         )}
       </CardContent>
     </Card>

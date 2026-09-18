@@ -115,6 +115,10 @@ export async function DELETE(
     return NextResponse.json({ error: "Нельзя удалить себя из объекта" }, { status: 400 });
   }
 
+  if (!canManageSettings(auth.ctx.profile.role)) {
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  }
+
   const { error } = await supabase
     .from("project_members")
     .delete()

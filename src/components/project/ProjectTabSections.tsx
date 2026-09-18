@@ -15,6 +15,7 @@ import {
 } from "@/lib/smetaTemplates";
 import { downloadSmetaPdf } from "@/lib/smetaPdf";
 import { ClipboardList, FileText, Loader2, Pencil, Trash2 } from "lucide-react";
+import { LoadingBlock, SkeletonLines } from "@/components/ui/Loading";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { EXPENSE_CATEGORIES, LEGACY_EXPENSE_CATEGORIES } from "@/lib/constants";
@@ -434,7 +435,10 @@ export function ProjectExpensesSection({
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="py-8 text-center text-muted">Загрузка…</p>
+            <div className="py-4">
+              <LoadingBlock compact label="Загрузка сметы…" />
+              <SkeletonLines rows={4} />
+            </div>
           ) : grouped.length === 0 ? (
             <p className="py-8 text-center text-muted">
               Пока пусто. Добавьте, например, «Фундамент → Бетон М250».
@@ -602,10 +606,15 @@ export function ProjectActivitySection({ projectId }: { projectId: number }) {
   const [log, setLog] = useState<
     { action_type: string; details: string | null; user_name: string | null; created_at: string }[]
   >([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
+    setLoading(true);
     fetch(`/api/projects/${projectId}/activity`)
       .then((r) => r.json())
-      .then(setLog);
+      .then(setLog)
+      .catch(() => setLog([]))
+      .finally(() => setLoading(false));
   }, [projectId]);
 
   return (
@@ -614,20 +623,26 @@ export function ProjectActivitySection({ projectId }: { projectId: number }) {
         <h2 className="font-semibold text-ink">Журнал действий</h2>
       </CardHeader>
       <CardContent>
-        <ul className="space-y-3">
-          {log.map((entry, i) => (
-            <li key={i} className="flex gap-3 text-sm">
-              <span className="shrink-0 text-ink-subtle">
-                {format(new Date(entry.created_at), "d MMM, HH:mm", { locale: ru })}
-              </span>
-              <span className="text-ink-muted">
-                {formatActivityDetails(entry.details) || entry.action_type}
-              </span>
-              {entry.user_name && <span className="text-ink-subtle">— {entry.user_name}</span>}
-            </li>
-          ))}
-        </ul>
-        {log.length === 0 && <p className="text-sm text-ink-muted">Пока нет записей</p>}
+        {loading ? (
+          <LoadingBlock compact label="Загрузка журнала…" />
+        ) : (
+          <>
+            <ul className="space-y-3">
+              {log.map((entry, i) => (
+                <li key={i} className="flex gap-3 text-sm">
+                  <span className="shrink-0 text-ink-subtle">
+                    {format(new Date(entry.created_at), "d MMM, HH:mm", { locale: ru })}
+                  </span>
+                  <span className="text-ink-muted">
+                    {formatActivityDetails(entry.details) || entry.action_type}
+                  </span>
+                  {entry.user_name && <span className="text-ink-subtle">— {entry.user_name}</span>}
+                </li>
+              ))}
+            </ul>
+            {log.length === 0 && <p className="text-sm text-ink-muted">Пока нет записей</p>}
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -10,6 +10,7 @@ import {
   stageStatusLabel,
   useStatusLabels,
 } from "@/hooks/useStatusLabels";
+import { LoadingBlock } from "@/components/ui/Loading";
 import { downloadProjectReportPdf } from "@/lib/projectReportPdf";
 import { useAuth } from "@/components/auth/AuthProvider";
 
@@ -130,7 +131,7 @@ export default function ReportPrintPage() {
   }, [data]);
 
   if (error) return <div className="p-8 text-red-600">{error}</div>;
-  if (!data) return <div className="p-8 text-ink-muted">Загрузка…</div>;
+  if (!data) return <LoadingBlock label="Загрузка отчёта…" />;
 
   const { project, stages, expenses, photos, total_spent, budget, budget_remaining, generated_at } =
     data;

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/utils/cn";
 import {
   LayoutDashboard,
@@ -12,21 +12,46 @@ import {
   Menu,
   X,
   LogOut,
+  Users,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { canManageSettings } from "@/lib/auth/roles";
+import { Suspense } from "react";
 
-const nav = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  settingsOnly?: boolean;
+  kind?: "users" | "settings";
+};
+
+const nav: NavItem[] = [
   { href: "/dashboard", label: "Дашборд", icon: LayoutDashboard },
   { href: "/reports", label: "Отчёты", icon: FileText },
-  { href: "/settings", label: "Справочники", icon: Settings, settingsOnly: true },
+  {
+    href: "/settings?tab=users",
+    label: "Пользователи",
+    icon: Users,
+    settingsOnly: true,
+    kind: "users",
+  },
+  {
+    href: "/settings?tab=stages",
+    label: "Справочники",
+    icon: Settings,
+    settingsOnly: true,
+    kind: "settings",
+  },
 ];
 
 function SidebarNav({
   pathname,
+  settingsTab,
   onNavigate,
 }: {
   pathname: string;
+  settingsTab: string | null;
   onNavigate?: () => void;
 }) {
   const { user, displayName, roleLabel, role, loading, signOut } = useAuth();
@@ -52,9 +77,21 @@ function SidebarNav({
       <nav className="p-2 space-y-0.5 flex-1" aria-label="Основное меню">
         {nav
           .filter((item) => !item.settingsOnly || showSettings)
-          .map(({ href, label, icon: Icon }) => {
-            const active =
-              pathname === href || (href !== "/" && pathname.startsWith(href));
+          .map(({ href, label, icon: Icon, kind }) => {
+            let active = false;
+            if (kind === "users") {
+              active =
+                pathname.startsWith("/settings") &&
+                (settingsTab === "users" || !settingsTab);
+            } else if (kind === "settings") {
+              active =
+                pathname.startsWith("/settings") &&
+                !!settingsTab &&
+                settingsTab !== "users";
+            } else {
+              const base = href.split("?")[0];
+              active = pathname === base || (base !== "/" && pathname.startsWith(base));
+            }
             return (
               <Link
                 key={href}
@@ -119,15 +156,17 @@ function SidebarNav({
   );
 }
 
-export function Layout({ children }: { children: React.ReactNode }) {
+function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const settingsTab = searchParams.get("tab");
   const isPublicHome = pathname === "/";
   const isLogin = pathname === "/login";
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     setDrawerOpen(false);
-  }, [pathname]);
+  }, [pathname, settingsTab]);
 
   useEffect(() => {
     document.body.style.overflow = drawerOpen ? "hidden" : "";
@@ -143,7 +182,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex bg-surface text-ink">
       <aside className="no-print hidden min-[901px]:flex w-[232px] min-h-screen border-r border-line bg-white shrink-0 flex-col sticky top-0 h-screen">
-        <SidebarNav pathname={pathname} />
+        <SidebarNav pathname={pathname} settingsTab={settingsTab} />
       </aside>
 
       <div className="no-print min-[901px]:hidden fixed top-0 inset-x-0 z-40 h-14 border-b border-line bg-white flex items-center gap-3 px-4">
@@ -183,7 +222,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <SidebarNav pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
+            <SidebarNav
+              pathname={pathname}
+              settingsTab={settingsTab}
+              onNavigate={() => setDrawerOpen(false)}
+            />
           </aside>
         </div>
       )}
@@ -194,5 +237,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
+  );
+}
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-surface">{children}</div>}>
+      <LayoutShell>{children}</LayoutShell>
+    </Suspense>
   );
 }
