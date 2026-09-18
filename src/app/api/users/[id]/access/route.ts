@@ -61,7 +61,7 @@ export async function PUT(
   const toRemove = [...current].filter((id) => !desired.has(id));
 
   if (toAdd.length) {
-    const { error } = await auth.ctx.db.from("project_members").upsert(
+    const { error } = await supabase.from("project_members").upsert(
       toAdd.map((project_id) => ({
         project_id,
         user_id: userId,
@@ -70,7 +70,10 @@ export async function PUT(
       { onConflict: "project_id,user_id" }
     );
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const msg = /row-level security|RLS/i.test(error.message || "")
+        ? "Нет прав на запись в project_members (RLS). Выполните в Supabase SQL: supabase/migrations/20260918_fix_project_members_rls.sql"
+        : error.message;
+      return NextResponse.json({ error: msg }, { status: 500 });
     }
   }
 

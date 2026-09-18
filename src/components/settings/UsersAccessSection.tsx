@@ -301,7 +301,7 @@ export function UsersAccessSection() {
               )}
 
               <div className="border-t border-line pt-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="space-y-2">
                   <div>
                     <p className="text-sm font-semibold text-ink">Доступ к объектам</p>
                     <p className="text-caption text-muted">
@@ -312,7 +312,7 @@ export function UsersAccessSection() {
                     value={memberRole}
                     onChange={(e) => setMemberRole(e.target.value as AppRole)}
                     aria-label="Роль на объектах"
-                    className="sm:w-40"
+                    className="w-full sm:w-48"
                   >
                     <option value="manager">Менеджер</option>
                     <option value="foreman">Прораб</option>
