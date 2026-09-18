@@ -106,6 +106,65 @@ export async function POST(request: Request) {
     const access = await assertProjectAccess(auth.ctx, projectId);
     if (!access.ok) return access.response;
     const body = await request.json();
+
+    // Bulk seed detailed spreadsheet-style estimate
+    if (body?.action === "seed_detailed") {
+      const { buildDetailedSmetaExpenseRows } = await import("@/lib/smetaTemplates");
+      const replace = body.replace !== false;
+      const date =
+        typeof body.date === "string" && body.date
+          ? body.date
+          : new Date().toISOString().slice(0, 10);
+      const addedBy = actorName(auth.ctx);
+      const lines = buildDetailedSmetaExpenseRows(date, addedBy).map((r) => ({
+        ...r,
+        project_id: projectId,
+      }));
+
+      if (replace) {
+        const { error: delError } = await supabase
+          .from("expenses")
+          .delete()
+          .eq("project_id", projectId);
+        if (delError) {
+          return NextResponse.json({ error: delError.message }, { status: 500 });
+        }
+      }
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("expenses")
+        .insert(lines)
+        .select("id");
+
+      if (insertError) {
+        console.error(insertError);
+        const msg = /subcategory|unit_price|quantity|column|schema cache/i.test(
+          insertError.message || ""
+        )
+          ? "Нужно обновить таблицу expenses (миграция 20260917_expenses_smeta_fields.sql)"
+          : /row-level security|RLS/i.test(insertError.message || "")
+            ? "RLS блокирует expenses — отключите RLS для expenses в Supabase"
+            : insertError.message;
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
+
+      const total = lines.reduce((s, r) => s + r.amount, 0);
+      await supabase.from("activity_log").insert({
+        project_id: projectId,
+        action_type: "created",
+        entity_type: "expense",
+        entity_id: projectId,
+        details: `Заполнена детальная смета: ${lines.length} позиций на ${Math.round(total).toLocaleString("ru-RU")} ₽`,
+        user_name: addedBy,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        count: inserted?.length ?? lines.length,
+        total,
+      });
+    }
+
     const { date, category, description, added_by } = body;
     const amount = computeAmount(body);
     if (!date || !category || amount == null || !Number.isFinite(amount)) {

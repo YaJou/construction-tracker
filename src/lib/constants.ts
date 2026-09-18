@@ -25,15 +25,18 @@ export const STAGE_STATUS_LABELS: Record<string, string> = {
 
 export const EXPENSE_CATEGORIES = [
   "Фундамент",
+  "Плита черновая",
+  "Цоколь",
   "Стены",
+  "Армопояс",
   "Кровля",
   "Окна и двери",
+  "Прочее",
   "Черновые работы",
   "Электрика",
   "Сантехника",
   "Дополнения",
   "Проект",
-  "Прочее",
 ];
 
 /** @deprecated Prefer SMETA item kinds — kept for old expense rows */

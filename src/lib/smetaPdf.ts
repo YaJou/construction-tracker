@@ -1,7 +1,11 @@
 import { jsPDF } from "jspdf";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { SMETA_KIND_LABELS, type SmetaItemKind } from "@/lib/smetaTemplates";
+import {
+  SMETA_KIND_LABELS,
+  sortSmetaCategories,
+  type SmetaItemKind,
+} from "@/lib/smetaTemplates";
 
 export type SmetaPdfExpense = {
   date: string;
@@ -199,7 +203,7 @@ export async function downloadSmetaPdf(
   });
   y += 22;
 
-  // Group by category
+  // Group by category (spreadsheet order)
   const groups = new Map<string, SmetaPdfExpense[]>();
   for (const e of data.expenses) {
     const list = groups.get(e.category) || [];
@@ -207,12 +211,15 @@ export async function downloadSmetaPdf(
     groups.set(e.category, list);
   }
 
+  const orderedCategories = sortSmetaCategories([...groups.keys()]);
+
   if (groups.size === 0) {
     setFont(false, 10, C.muted);
     wrapped("Позиций в смете пока нет.", contentW, 5);
   }
 
-  for (const [category, rows] of groups) {
+  for (const category of orderedCategories) {
+    const rows = groups.get(category) || [];
     const sectionTotal = rows.reduce((s, r) => s + Number(r.amount), 0);
     ensure(14);
     setFont(true, 12, C.green);
