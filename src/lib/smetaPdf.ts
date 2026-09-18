@@ -34,17 +34,21 @@ export type SmetaPdfInput = {
   generated_at: string;
 };
 
+/** Matches website smeta: green headers, cream cols, peach section totals */
 const C = {
   green: [23, 63, 52] as [number, number, number],
   orange: [255, 122, 26] as [number, number, number],
   ink: [23, 32, 29] as [number, number, number],
   muted: [97, 115, 108] as [number, number, number],
+  cream: [255, 244, 236] as [number, number, number], // #FFF4EC
+  stripe: [248, 250, 249] as [number, number, number],
   fill: [245, 248, 246] as [number, number, number],
   line: [225, 233, 229] as [number, number, number],
+  white: [255, 255, 255] as [number, number, number],
 };
 
-const MX = 13;
-const BOTTOM = 20;
+const MX = 12;
+const BOTTOM = 18;
 const TOP = 16;
 
 let fontCache: { regular: string; bold: string } | null = null;
@@ -97,6 +101,10 @@ function money(n: number) {
   return `${Math.round(n).toLocaleString("ru-RU")} ₽`;
 }
 
+function num(n: number) {
+  return Number(n).toLocaleString("ru-RU");
+}
+
 function fmtDate(value: string | null | undefined, pattern = "d MMM yyyy") {
   if (!value) return "—";
   try {
@@ -114,7 +122,7 @@ function itemName(e: SmetaPdfExpense) {
   return e.subcategory || e.description || "—";
 }
 
-/** Estimate-only PDF: no construction stages, only smeta/expense lines. */
+/** Estimate PDF styled like the website smeta sections. */
 export async function downloadSmetaPdf(
   data: SmetaPdfInput,
   options?: { authorName?: string }
@@ -133,41 +141,53 @@ export async function downloadSmetaPdf(
   const generatedLabel = fmtDate(data.generated_at, "d MMMM yyyy, HH:mm");
   const pageSections = ["Смета"];
 
+  // Column anchors (mm) — match website table
+  const colName = MX + 3.5;
+  const colUnit = MX + 98;
+  const colQtyR = MX + 122;
+  const colPriceR = MX + 148;
+  const colSumR = pageW - MX - 3.5;
+  const nameMaxW = colUnit - colName - 4;
+
   const setFont = (bold: boolean, size: number, color = C.ink) => {
     doc.setFont("DejaVuSans", bold ? "bold" : "normal");
     doc.setFontSize(size);
     doc.setTextColor(color[0], color[1], color[2]);
   };
 
+  const newPage = (sectionLabel?: string) => {
+    doc.addPage();
+    pageSections.push(sectionLabel || "Смета");
+    y = TOP;
+  };
+
   const ensure = (need: number) => {
-    if (y + need > pageH - BOTTOM) {
-      doc.addPage();
-      pageSections.push("Смета");
-      y = TOP;
-    }
+    if (y + need > pageH - BOTTOM) newPage();
   };
 
-  const wrapped = (text: string, maxW: number, lineH: number) => {
-    const lines = doc.splitTextToSize(text || "—", maxW) as string[];
-    for (const line of lines) {
-      ensure(lineH);
-      doc.text(line, MX, y);
-      y += lineH;
-    }
-  };
-
-  // Title block
+  // —— Title ——
   setFont(true, 9, C.orange);
   doc.text("СтройУчёт", MX, y);
   y += 7;
-  setFont(true, 22, C.ink);
-  wrapped(data.project.name, contentW, 8);
-  y += 1;
+  setFont(true, 20, C.ink);
+  const titleLines = doc.splitTextToSize(data.project.name, contentW) as string[];
+  for (const line of titleLines) {
+    ensure(8);
+    doc.text(line, MX, y);
+    y += 7.5;
+  }
   setFont(false, 10, C.muted);
-  wrapped("Смета объекта (без этапов работ)", contentW, 5);
-  if (data.project.address) wrapped(data.project.address, contentW, 4.5);
+  doc.text("Позиции по разделам · смета объекта", MX, y);
+  y += 5;
+  if (data.project.address) {
+    const addr = doc.splitTextToSize(data.project.address, contentW) as string[];
+    for (const line of addr) {
+      ensure(4.5);
+      doc.text(line, MX, y);
+      y += 4.5;
+    }
+  }
   if (data.project.client) {
-    setFont(false, 9, C.muted);
     ensure(5);
     doc.text(`Клиент: ${data.project.client}`, MX, y);
     y += 5;
@@ -176,13 +196,13 @@ export async function downloadSmetaPdf(
   doc.setDrawColor(C.orange[0], C.orange[1], C.orange[2]);
   doc.setLineWidth(0.5);
   doc.line(MX, y, pageW - MX, y);
-  y += 8;
+  y += 7;
 
-  // Summary cards
+  // —— Summary cards ——
   const hasBudget = data.has_budget ?? data.budget > 0;
   const gap = 4;
   const cardW = (contentW - gap * 2) / 3;
-  ensure(22);
+  ensure(20);
   const cards = [
     { t: "Бюджет", v: hasBudget ? money(data.budget) : "Не задан" },
     { t: "Итого по смете", v: money(data.total_spent) },
@@ -194,106 +214,159 @@ export async function downloadSmetaPdf(
   cards.forEach((c, i) => {
     const x = MX + i * (cardW + gap);
     doc.setFillColor(C.fill[0], C.fill[1], C.fill[2]);
-    doc.roundedRect(x, y, cardW, 16, 2.5, 2.5, "F");
-    setFont(false, 8, C.muted);
+    doc.roundedRect(x, y, cardW, 15, 2.5, 2.5, "F");
+    setFont(false, 7.5, C.muted);
     doc.text(c.t, x + 3, y + 5);
     setFont(true, 10, C.ink);
     const lines = doc.splitTextToSize(c.v, cardW - 6) as string[];
     doc.text(lines[0], x + 3, y + 11);
   });
-  y += 22;
+  y += 20;
 
-  // Group by category (spreadsheet order)
+  // —— Groups ——
   const groups = new Map<string, SmetaPdfExpense[]>();
   for (const e of data.expenses) {
     const list = groups.get(e.category) || [];
     list.push(e);
     groups.set(e.category, list);
   }
-
   const orderedCategories = sortSmetaCategories([...groups.keys()]);
 
   if (groups.size === 0) {
     setFont(false, 10, C.muted);
-    wrapped("Позиций в смете пока нет.", contentW, 5);
+    doc.text("Позиций в смете пока нет.", MX, y);
   }
+
+  const drawSectionHeader = (category: string, sectionTotal: number) => {
+    ensure(22);
+    const h = 10;
+    doc.setFillColor(C.green[0], C.green[1], C.green[2]);
+    doc.roundedRect(MX, y, contentW, h, 2.2, 2.2, "F");
+    // square bottom corners so it joins the table
+    doc.rect(MX, y + h - 2.2, contentW, 2.2, "F");
+    setFont(true, 10, C.white);
+    doc.text(category.toUpperCase(), MX + 3.5, y + 6.5);
+    doc.text(money(sectionTotal), colSumR, y + 6.5, { align: "right" });
+    y += h;
+  };
+
+  const drawColHead = () => {
+    ensure(8);
+    const h = 7;
+    doc.setFillColor(C.cream[0], C.cream[1], C.cream[2]);
+    doc.rect(MX, y, contentW, h, "F");
+    setFont(true, 7, C.muted);
+    doc.text("ПОЗИЦИЯ", colName, y + 4.6);
+    doc.text("ЕД.", colUnit, y + 4.6);
+    doc.text("КОЛ-ВО", colQtyR, y + 4.6, { align: "right" });
+    doc.text("ЦЕНА", colPriceR, y + 4.6, { align: "right" });
+    doc.text("СТОИМОСТЬ", colSumR, y + 4.6, { align: "right" });
+    y += h;
+  };
+
+  const drawSectionFooter = (category: string, sectionTotal: number) => {
+    ensure(9);
+    const h = 8;
+    doc.setFillColor(C.cream[0], C.cream[1], C.cream[2]);
+    doc.rect(MX, y, contentW, h, "F");
+    // round bottom
+    doc.setFillColor(C.cream[0], C.cream[1], C.cream[2]);
+    doc.roundedRect(MX, y, contentW, h, 2, 2, "F");
+    doc.rect(MX, y, contentW, 2, "F");
+    setFont(true, 9, C.ink);
+    doc.text(`Итого ${category}`, colName, y + 5.3);
+    doc.text(money(sectionTotal), colSumR, y + 5.3, { align: "right" });
+    y += h + 5;
+  };
 
   for (const category of orderedCategories) {
     const rows = groups.get(category) || [];
     const sectionTotal = rows.reduce((s, r) => s + Number(r.amount), 0);
-    ensure(14);
-    setFont(true, 12, C.green);
-    doc.text(category.toUpperCase(), MX, y);
-    setFont(true, 10, C.ink);
-    doc.text(money(sectionTotal), pageW - MX, y, { align: "right" });
-    y += 3;
-    doc.setDrawColor(C.orange[0], C.orange[1], C.orange[2]);
-    doc.setLineWidth(0.45);
-    doc.line(MX, y, MX + 16, y);
-    y += 5;
 
-    // table head
-    const drawHead = () => {
-      ensure(8);
-      doc.setFillColor(C.fill[0], C.fill[1], C.fill[2]);
-      doc.roundedRect(MX, y - 4, contentW, 7, 1.5, 1.5, "F");
-      setFont(true, 8, C.muted);
-      doc.text("Позиция", MX + 2, y);
-      doc.text("Ед.", MX + 78, y);
-      doc.text("Кол-во", MX + 92, y);
-      doc.text("Цена", MX + 112, y);
-      doc.text("Сумма", pageW - MX, y, { align: "right" });
-      y += 5;
-    };
-    drawHead();
+    drawSectionHeader(category, sectionTotal);
+    drawColHead();
 
     rows.forEach((e, idx) => {
       const name = itemName(e);
-      const nameLines = doc.splitTextToSize(name, 72) as string[];
+      const nameLines = doc.splitTextToSize(name, nameMaxW) as string[];
       const kind = e.kind
         ? SMETA_KIND_LABELS[e.kind as SmetaItemKind] || e.kind
         : "";
-      const nameLh = 5;
-      const kindExtra = kind ? 4.5 : 1.5;
-      const rowH = Math.max(7.5, nameLines.length * nameLh + kindExtra);
-      if (y + rowH > pageH - BOTTOM) {
-        doc.addPage();
-        pageSections.push("Смета");
-        y = TOP;
-        drawHead();
-      }
-      if (idx % 2 === 1) {
-        doc.setFillColor(C.fill[0], C.fill[1], C.fill[2]);
-        doc.rect(MX, y - 3.8, contentW, rowH + 0.8, "F");
-      }
-      setFont(false, 9, C.ink);
-      nameLines.forEach((line, li) => doc.text(line, MX + 2, y + li * nameLh));
-      doc.text(e.unit || "—", MX + 78, y);
-      doc.text(e.quantity != null ? String(e.quantity) : "—", MX + 92, y);
-      doc.text(
-        e.unit_price != null ? Number(e.unit_price).toLocaleString("ru-RU") : "—",
-        MX + 112,
-        y
+      const nameLh = 4.2;
+      const topPad = 3.2;
+      const kindH = kind ? 3.6 : 0;
+      const bottomPad = 2.4;
+      const rowH = Math.max(
+        9,
+        topPad + nameLines.length * nameLh + kindH + bottomPad
       );
-      doc.text(money(Number(e.amount)), pageW - MX, y, { align: "right" });
+
+      if (y + rowH + 10 > pageH - BOTTOM) {
+        newPage(category);
+        drawSectionHeader(category, sectionTotal);
+        drawColHead();
+      }
+
+      // zebra
+      if (idx % 2 === 1) {
+        doc.setFillColor(C.stripe[0], C.stripe[1], C.stripe[2]);
+        doc.rect(MX, y, contentW, rowH, "F");
+      }
+
+      const textY = y + topPad + 3.2;
+      setFont(true, 9, C.ink);
+      nameLines.forEach((line, li) => {
+        doc.text(line, colName, textY + li * nameLh);
+      });
       if (kind) {
         setFont(false, 7, C.muted);
-        doc.text(kind, MX + 2, y + nameLines.length * nameLh);
+        doc.text(kind, colName, textY + nameLines.length * nameLh + 0.2);
       }
+
+      const numsY = textY;
+      setFont(false, 8.5, C.muted);
+      doc.text(e.unit || "—", colUnit, numsY);
+      setFont(false, 8.5, C.ink);
+      doc.text(e.quantity != null ? num(Number(e.quantity)) : "—", colQtyR, numsY, {
+        align: "right",
+      });
+      doc.text(
+        e.unit_price != null ? num(Number(e.unit_price)) : "—",
+        colPriceR,
+        numsY,
+        { align: "right" }
+      );
+      setFont(true, 9, C.ink);
+      doc.text(money(Number(e.amount)), colSumR, numsY, { align: "right" });
+
+      // subtle bottom hairline
+      doc.setDrawColor(C.line[0], C.line[1], C.line[2]);
+      doc.setLineWidth(0.15);
+      doc.line(MX, y + rowH, MX + contentW, y + rowH);
+
       y += rowH;
     });
-    y += 4;
+
+    drawSectionFooter(category, sectionTotal);
   }
 
-  ensure(10);
-  doc.setDrawColor(C.line[0], C.line[1], C.line[2]);
-  doc.line(MX, y, pageW - MX, y);
-  y += 6;
-  setFont(true, 11, C.ink);
-  doc.text("Итого по смете", MX, y);
-  doc.text(money(data.total_spent), pageW - MX, y, { align: "right" });
+  // —— Grand total (green bar like website) ——
+  if (groups.size > 0) {
+    ensure(16);
+    const h = 14;
+    doc.setFillColor(C.green[0], C.green[1], C.green[2]);
+    doc.roundedRect(MX, y, contentW, h, 3, 3, "F");
+    setFont(true, 11, C.white);
+    doc.text("Общая сумма по смете", MX + 4, y + 6);
+    setFont(false, 8, C.white);
+    doc.setTextColor(255, 255, 255);
+    doc.text("По всем разделам", MX + 4, y + 10.5);
+    setFont(true, 13, C.white);
+    doc.text(money(data.total_spent), colSumR, y + 8.5, { align: "right" });
+    y += h + 4;
+  }
 
-  // Chrome
+  // —— Chrome ——
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
