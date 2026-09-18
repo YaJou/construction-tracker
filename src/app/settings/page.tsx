@@ -474,9 +474,13 @@ function SettingsPageInner() {
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="text-[28px] font-semibold leading-9 tracking-tight text-ink">Справочники</h1>
+          <h1 className="text-[28px] font-semibold leading-9 tracking-tight text-ink">
+            {tab === "users" ? "Пользователи" : "Справочники"}
+          </h1>
           <p className="mt-1 text-[15px] text-muted">
-            Настройте этапы, ответственных и варианты для карточек объектов
+            {tab === "users"
+              ? "Кто зарегистрировался — выдайте или заберите доступ к объектам"
+              : "Настройте этапы, ответственных и варианты для карточек объектов"}
           </p>
         </div>
       </div>
