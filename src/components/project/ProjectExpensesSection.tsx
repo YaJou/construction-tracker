@@ -14,7 +14,7 @@ import {
   type SmetaItemKind,
 } from "@/lib/smetaTemplates";
 import { downloadSmetaPdf } from "@/lib/smetaPdf";
-import { ClipboardList, FileText, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
+import { ClipboardList, FileText, FileSpreadsheet, Loader2, Pencil, Trash2, Sparkles } from "lucide-react";
 import { LoadingBlock, SkeletonLines } from "@/components/ui/Loading";
 import { format } from "date-fns";
 import { EXPENSE_CATEGORIES, LEGACY_EXPENSE_CATEGORIES } from "@/lib/constants";
@@ -63,6 +63,7 @@ export function ProjectExpensesSection({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [excelBusy, setExcelBusy] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -243,6 +244,36 @@ export function ProjectExpensesSection({
     }
   };
 
+  const handleExportSmetaExcel = async () => {
+    if (!data || excelBusy) return;
+    setExcelBusy(true);
+    setError("");
+    try {
+      const { downloadSmetaExcel } = await import("@/lib/smetaExcel");
+      await downloadSmetaExcel(
+        {
+          project: {
+            name: data.project?.name || `Объект #${projectId}`,
+            address: data.project?.address || "",
+            client: data.project?.client || "",
+            manager: data.project?.manager || null,
+          },
+          expenses: data.expenses,
+          total_spent: data.total_spent,
+          budget: data.budget,
+          has_budget: data.has_budget,
+          budget_remaining: data.budget_remaining,
+          generated_at: new Date().toISOString(),
+        },
+        { authorName: displayName }
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка Excel сметы");
+    } finally {
+      setExcelBusy(false);
+    }
+  };
+
   const allCategories = useMemo(() => {
     const set = new Set<string>([...EXPENSE_CATEGORIES, ...LEGACY_EXPENSE_CATEGORIES]);
     for (const e of data?.expenses || []) set.add(e.category);
@@ -379,6 +410,19 @@ export function ProjectExpensesSection({
                 <FileText className="mr-1.5 h-4 w-4" />
               )}
               Смета PDF
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={excelBusy || !data?.expenses.length}
+              onClick={() => void handleExportSmetaExcel()}
+            >
+              {excelBusy ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+              )}
+              Смета Excel
             </Button>
           </div>
         </CardHeader>
