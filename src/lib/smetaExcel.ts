@@ -38,7 +38,14 @@ function thinBorder(): Partial<ExcelJS.Borders> {
   return { top: edge, left: edge, bottom: edge, right: edge };
 }
 
-/** Download smeta as .xlsx — same sections as website / PDF, editable qty×price. */
+function paintRow(row: ExcelJS.Row, hex: string, cols = 7) {
+  for (let c = 1; c <= cols; c++) {
+    row.getCell(c).fill = styleFill(hex);
+    row.getCell(c).border = thinBorder();
+  }
+}
+
+/** Download smeta as .xlsx — amounts always visible in column F. */
 export async function downloadSmetaExcel(
   data: SmetaPdfInput,
   options?: { authorName?: string }
@@ -48,6 +55,8 @@ export async function downloadSmetaExcel(
   const wb = new ExcelJS.Workbook();
   wb.creator = "СтройУчёт";
   wb.created = new Date();
+  // So Excel shows formula results without "need to recalculate"
+  wb.calcProperties.fullCalcOnLoad = true;
 
   const ws = wb.addWorksheet("Смета", {
     views: [{ state: "frozen", ySplit: 8 }],
@@ -70,7 +79,6 @@ export async function downloadSmetaExcel(
     locale: ru,
   });
 
-  // Brand + title
   ws.mergeCells("A1:G1");
   ws.getCell("A1").value = "СтройУчёт · Смета объекта";
   ws.getCell("A1").font = { bold: true, color: { argb: `FF${ORANGE}` }, size: 11 };
@@ -92,23 +100,18 @@ export async function downloadSmetaExcel(
   ws.getCell("A4").value = `${author} · ${generated}`;
   ws.getCell("A4").font = { color: { argb: `FF${MUTED}` }, size: 9 };
 
-  // Total only (no budget)
+  // Top total: label A–E, sum in F
   const sumRow = ws.getRow(6);
   sumRow.height = 24;
   ws.mergeCells("A6:E6");
   sumRow.getCell(1).value = "Общая сумма по смете";
   sumRow.getCell(1).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 12 };
   sumRow.getCell(1).alignment = { vertical: "middle" };
-  sumRow.getCell(6).value = data.total_spent;
+  sumRow.getCell(6).value = Number(data.total_spent);
   sumRow.getCell(6).numFmt = '#,##0 "₽"';
   sumRow.getCell(6).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 13 };
   sumRow.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
-  for (let c = 1; c <= 7; c++) {
-    sumRow.getCell(c).fill = styleFill(GREEN);
-    sumRow.getCell(c).border = thinBorder();
-  }
-
-  ws.getRow(7).values = [];
+  paintRow(sumRow, GREEN);
 
   const groups = new Map<string, SmetaPdfExpense[]>();
   for (const e of data.expenses) {
@@ -119,24 +122,24 @@ export async function downloadSmetaExcel(
   const ordered = sortSmetaCategories([...groups.keys()]);
 
   let rowIdx = 8;
-  const sectionAmountRanges: string[] = [];
+  const sectionFooterRows: number[] = [];
 
   for (const category of ordered) {
     const rows = groups.get(category) || [];
     const sectionTotal = rows.reduce((s, r) => s + Number(r.amount), 0);
 
-    // Section header
-    ws.mergeCells(rowIdx, 1, rowIdx, 7);
+    // Section header: name in A–E, total in F
+    ws.mergeCells(rowIdx, 1, rowIdx, 5);
     const head = ws.getRow(rowIdx);
     head.height = 22;
-    head.getCell(1).value = `${category.toUpperCase()}    ${Math.round(sectionTotal).toLocaleString("ru-RU")} ₽`;
+    head.getCell(1).value = category.toUpperCase();
     head.getCell(1).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 11 };
-    head.getCell(1).fill = styleFill(GREEN);
     head.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
-    for (let c = 1; c <= 7; c++) {
-      head.getCell(c).fill = styleFill(GREEN);
-      head.getCell(c).border = thinBorder();
-    }
+    head.getCell(6).value = sectionTotal;
+    head.getCell(6).numFmt = '#,##0 "₽"';
+    head.getCell(6).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 11 };
+    head.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
+    paintRow(head, GREEN);
     rowIdx += 1;
 
     // Column headers
@@ -153,101 +156,111 @@ export async function downloadSmetaExcel(
 
     const firstDataRow = rowIdx;
 
-    rows.forEach((e, i) => {
+    for (let i = 0; i < rows.length; i++) {
+      const e = rows[i];
       const r = ws.getRow(rowIdx);
-      const qty = e.quantity != null ? Number(e.quantity) : null;
-      const price = e.unit_price != null ? Number(e.unit_price) : null;
-      const hasFormula = qty != null && price != null;
+      const qty = e.quantity != null && Number.isFinite(Number(e.quantity)) ? Number(e.quantity) : null;
+      const price =
+        e.unit_price != null && Number.isFinite(Number(e.unit_price))
+          ? Number(e.unit_price)
+          : null;
+      const amount =
+        qty != null && price != null
+          ? Math.round(qty * price * 100) / 100
+          : Number(e.amount) || 0;
 
-      r.values = [
-        itemName(e),
-        kindLabel(e.kind),
-        e.unit || "—",
-        qty,
-        price,
-        hasFormula ? { formula: `D${rowIdx}*E${rowIdx}` } : Number(e.amount),
-        "",
-      ];
-      r.height = 20;
+      r.getCell(1).value = itemName(e);
       r.getCell(1).font = { bold: true, color: { argb: `FF${INK}` }, size: 10 };
+      r.getCell(2).value = kindLabel(e.kind);
       r.getCell(2).font = { color: { argb: `FF${MUTED}` }, size: 9 };
+      r.getCell(3).value = e.unit || "—";
+      r.getCell(4).value = qty;
       r.getCell(4).numFmt = "#,##0.##";
-      r.getCell(5).numFmt = '#,##0 "₽"';
+      r.getCell(5).value = price;
+      r.getCell(5).numFmt = '#,##0.## "₽"';
+
+      // Visible number + formula so cost always shows (even before Excel recalc)
+      if (qty != null && price != null) {
+        r.getCell(6).value = {
+          formula: `D${rowIdx}*E${rowIdx}`,
+          result: amount,
+        };
+      } else {
+        r.getCell(6).value = amount;
+      }
       r.getCell(6).numFmt = '#,##0 "₽"';
       r.getCell(6).font = { bold: true };
+      r.getCell(7).value = "";
 
+      r.height = 20;
       if (i % 2 === 1) {
         for (let c = 1; c <= 7; c++) r.getCell(c).fill = styleFill(STRIPE);
       }
       for (let c = 1; c <= 7; c++) r.getCell(c).border = thinBorder();
 
       rowIdx += 1;
-    });
-
-    const lastDataRow = rowIdx - 1;
-    if (lastDataRow >= firstDataRow) {
-      sectionAmountRanges.push(`F${firstDataRow}:F${lastDataRow}`);
     }
 
-    // Section footer with SUM formula
+    const lastDataRow = rowIdx - 1;
+
+    // Section footer: label left, sum in F
     const foot = ws.getRow(rowIdx);
     foot.height = 20;
+    ws.mergeCells(rowIdx, 1, rowIdx, 5);
     foot.getCell(1).value = `Итого ${category}`;
     foot.getCell(1).font = { bold: true, size: 10 };
+    foot.getCell(1).alignment = { vertical: "middle" };
     if (lastDataRow >= firstDataRow) {
-      foot.getCell(6).value = { formula: `SUM(F${firstDataRow}:F${lastDataRow})` };
+      foot.getCell(6).value = {
+        formula: `SUM(F${firstDataRow}:F${lastDataRow})`,
+        result: sectionTotal,
+      };
     } else {
       foot.getCell(6).value = sectionTotal;
     }
     foot.getCell(6).numFmt = '#,##0 "₽"';
     foot.getCell(6).font = { bold: true, size: 10 };
-    for (let c = 1; c <= 7; c++) {
-      foot.getCell(c).fill = styleFill(CREAM);
-      foot.getCell(c).border = thinBorder();
-    }
+    foot.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
+    paintRow(foot, CREAM);
+    sectionFooterRows.push(rowIdx);
     rowIdx += 1;
 
-    // spacer
-    rowIdx += 1;
+    rowIdx += 1; // spacer
   }
 
-  // Grand total
+  // Bottom grand total: label A–E, sum in F
   const grand = ws.getRow(rowIdx);
   grand.height = 26;
   ws.mergeCells(rowIdx, 1, rowIdx, 5);
   grand.getCell(1).value = "Общая сумма по смете";
   grand.getCell(1).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 12 };
   grand.getCell(1).alignment = { vertical: "middle" };
-  if (sectionAmountRanges.length) {
+  if (sectionFooterRows.length) {
     grand.getCell(6).value = {
-      formula: `SUM(${sectionAmountRanges.join(",")})`,
+      formula: `SUM(${sectionFooterRows.map((n) => `F${n}`).join(",")})`,
+      result: Number(data.total_spent),
     };
   } else {
-    grand.getCell(6).value = data.total_spent;
+    grand.getCell(6).value = Number(data.total_spent);
   }
+  // Keep top total in sync with same number
+  sumRow.getCell(6).value = Number(data.total_spent);
+
   grand.getCell(6).numFmt = '#,##0 "₽"';
   grand.getCell(6).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 13 };
   grand.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
-  for (let c = 1; c <= 7; c++) {
-    grand.getCell(c).fill = styleFill(GREEN);
-    grand.getCell(c).border = thinBorder();
-  }
+  paintRow(grand, GREEN);
 
-  // Help sheet
   const help = wb.addWorksheet("Как пользоваться");
   help.columns = [{ width: 80 }];
   help.getCell("A1").value = "Как править смету в Excel";
   help.getCell("A1").font = { bold: true, size: 14 };
   help.getCell("A3").value =
-    "1. Меняйте «Кол-во» и «Цена» — «Стоимость» пересчитается (формула кол-во × цена).";
-  help.getCell("A4").value =
-    "2. Итог раздела тоже считается автоматически (сумма позиций).";
-  help.getCell("A5").value =
-    "3. Общая сумма внизу — сумма всех стоимостей позиций.";
-  help.getCell("A6").value =
-    "4. Можно добавлять строки внутри раздела: скопируйте формулу стоимости из соседней ячейки.";
-  help.getCell("A8").value = "СтройУчёт";
-  help.getCell("A8").font = { bold: true, color: { argb: `FF${ORANGE}` } };
+    "1. Меняйте «Кол-во» (D) и «Цена» (E) — «Стоимость» (F) пересчитается.";
+  help.getCell("A4").value = "2. Все суммы (разделы и итог) стоят в колонке F.";
+  help.getCell("A5").value = "3. Итог раздела = сумма стоимостей позиций.";
+  help.getCell("A7").value = "СтройУчёт";
+  help.getCell("A7").font = { bold: true, color: { argb: `FF${ORANGE}` } };
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
