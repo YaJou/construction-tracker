@@ -69,7 +69,6 @@ export async function downloadSmetaExcel(
   const generated = format(new Date(data.generated_at || Date.now()), "d MMMM yyyy, HH:mm", {
     locale: ru,
   });
-  const hasBudget = data.has_budget ?? data.budget > 0;
 
   // Brand + title
   ws.mergeCells("A1:G1");
@@ -93,25 +92,20 @@ export async function downloadSmetaExcel(
   ws.getCell("A4").value = `${author} · ${generated}`;
   ws.getCell("A4").font = { color: { argb: `FF${MUTED}` }, size: 9 };
 
-  // Summary
+  // Total only (no budget)
   const sumRow = ws.getRow(6);
-  sumRow.values = [
-    "Бюджет",
-    hasBudget ? data.budget : "Не задан",
-    "Итого по смете",
-    data.total_spent,
-    "Остаток",
-    data.budget_remaining == null ? "—" : data.budget_remaining,
-  ];
-  sumRow.font = { bold: true, size: 10 };
-  sumRow.getCell(1).fill = styleFill(CREAM);
-  sumRow.getCell(3).fill = styleFill(CREAM);
-  sumRow.getCell(5).fill = styleFill(CREAM);
-  for (const col of [2, 4, 6]) {
-    const cell = sumRow.getCell(col);
-    if (typeof cell.value === "number") {
-      cell.numFmt = '#,##0 "₽"';
-    }
+  sumRow.height = 24;
+  ws.mergeCells("A6:E6");
+  sumRow.getCell(1).value = "Общая сумма по смете";
+  sumRow.getCell(1).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 12 };
+  sumRow.getCell(1).alignment = { vertical: "middle" };
+  sumRow.getCell(6).value = data.total_spent;
+  sumRow.getCell(6).numFmt = '#,##0 "₽"';
+  sumRow.getCell(6).font = { bold: true, color: { argb: `FF${WHITE}` }, size: 13 };
+  sumRow.getCell(6).alignment = { vertical: "middle", horizontal: "right" };
+  for (let c = 1; c <= 7; c++) {
+    sumRow.getCell(c).fill = styleFill(GREEN);
+    sumRow.getCell(c).border = thinBorder();
   }
 
   ws.getRow(7).values = [];

@@ -198,30 +198,18 @@ export async function downloadSmetaPdf(
   doc.line(MX, y, pageW - MX, y);
   y += 7;
 
-  // —— Summary cards ——
-  const hasBudget = data.has_budget ?? data.budget > 0;
-  const gap = 4;
-  const cardW = (contentW - gap * 2) / 3;
-  ensure(20);
-  const cards = [
-    { t: "Бюджет", v: hasBudget ? money(data.budget) : "Не задан" },
-    { t: "Итого по смете", v: money(data.total_spent) },
-    {
-      t: "Остаток",
-      v: data.budget_remaining == null ? "—" : money(data.budget_remaining),
-    },
-  ];
-  cards.forEach((c, i) => {
-    const x = MX + i * (cardW + gap);
-    doc.setFillColor(C.fill[0], C.fill[1], C.fill[2]);
-    doc.roundedRect(x, y, cardW, 15, 2.5, 2.5, "F");
-    setFont(false, 7.5, C.muted);
-    doc.text(c.t, x + 3, y + 5);
-    setFont(true, 10, C.ink);
-    const lines = doc.splitTextToSize(c.v, cardW - 6) as string[];
-    doc.text(lines[0], x + 3, y + 11);
-  });
-  y += 20;
+  // —— Total banner (no budget) ——
+  ensure(16);
+  const totalH = 14;
+  doc.setFillColor(C.green[0], C.green[1], C.green[2]);
+  doc.roundedRect(MX, y, contentW, totalH, 3, 3, "F");
+  setFont(true, 10, C.white);
+  doc.text("Общая сумма по смете", MX + 4, y + 5.5);
+  setFont(false, 8, C.white);
+  doc.text("По всем разделам", MX + 4, y + 10);
+  setFont(true, 13, C.white);
+  doc.text(money(data.total_spent), pageW - MX - 3.5, y + 8.5, { align: "right" });
+  y += totalH + 6;
 
   // —— Groups ——
   const groups = new Map<string, SmetaPdfExpense[]>();

@@ -526,24 +526,9 @@ export function ProjectExpensesSection({
           )}
 
           {data && (
-            <div className="flex flex-wrap gap-4 text-sm text-muted">
-              <span>
-                Бюджет:{" "}
-                <strong className="text-ink">
-                  {data.has_budget === false || data.budget <= 0
-                    ? "не задан"
-                    : money(data.budget)}
-                </strong>
-              </span>
-              <span>
-                По смете: <strong className="text-ink">{money(data.total_spent)}</strong>
-              </span>
-              {data.budget_remaining != null && (
-                <span className={data.budget_remaining < 0 ? "text-red-600" : ""}>
-                  Остаток: <strong>{money(data.budget_remaining)}</strong>
-                </span>
-              )}
-            </div>
+            <p className="text-sm text-muted">
+              Общая сумма: <strong className="text-ink tabular-nums">{money(data.total_spent)}</strong>
+            </p>
           )}
         </CardContent>
       </Card>
