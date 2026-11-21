@@ -14,6 +14,7 @@ import {
 import { Select } from "@/components/ui/Select";
 import { cn } from "@/utils/cn";
 import { compressPhoto, uploadPhotoWithProgress } from "@/lib/compressImage";
+import { upsertClientLocalProject } from "@/lib/clientLocalStore";
 import {
   ArrowLeft,
   Loader2,
@@ -259,7 +260,38 @@ export default function NewProjectPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка создания");
-      const projectId = data.id;
+      const projectId = data.id as number;
+
+      const nowIso = new Date().toISOString();
+      upsertClientLocalProject({
+        id: projectId,
+        name: form.name.trim(),
+        client: form.client.trim(),
+        address: form.address.trim(),
+        phone: phoneToStore(form.phone),
+        start_date: form.start_date || null,
+        planned_end_date: form.planned_end_date || null,
+        status: form.status,
+        budget: form.budget ? parseFormattedNumber(form.budget) : 0,
+        manager: form.manager.trim() || null,
+        foreman: form.foreman.trim() || null,
+        object_type: form.object_type.trim() || null,
+        area_sqm: form.area_sqm.trim() ? Number(form.area_sqm) : null,
+        note: form.note.trim() || null,
+        created_at: nowIso,
+        updated_at: nowIso,
+        progress_percent: 0,
+        active_stages: 0,
+        total_stages: 0,
+        completed_stages: 0,
+        preview_photos: [],
+        last_activity_at: nowIso,
+        last_activity_summary: "Создан проект",
+        today_photos_count: 0,
+        total_spent: 0,
+        budget_remaining: form.budget ? parseFormattedNumber(form.budget) : 0,
+        storage: data.storage || "local",
+      });
 
       if (photoFiles.length > 0) {
         for (const file of photoFiles) {

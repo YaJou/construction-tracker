@@ -4,6 +4,13 @@ import { STAGE_TEMPLATES, formatSubstepName } from "@/lib/stageTemplates";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 import { addProjectMember, getAccessibleProjectIds } from "@/lib/auth/projectAccess";
+import {
+  forceLocalDbMode,
+  isDbUnavailableMessage,
+  resolveDbMode,
+} from "@/lib/dbMode";
+import { createProjectLocal, listProjectsLocal } from "@/lib/localProjects";
+import { store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -27,14 +34,55 @@ export async function GET(request: Request) {
     const list = searchParams.get("list") ?? "active"; // active | completed | archived
 
     // 1. Все проекты (с фильтром доступа для не-руководителей)
+    const mode = await resolveDbMode();
+    let usingLocal = mode === "local";
+
+    if (!usingLocal) {
+      const probe = await supabase.from("projects").select("id").limit(1);
+      if (probe.error && isDbUnavailableMessage(probe.error.message)) {
+        forceLocalDbMode();
+        usingLocal = true;
+      }
+    }
+
+    if (usingLocal) {
+      return buildLocalProjectsResponse({
+        status,
+        search,
+        managerFilter,
+        clientFilter,
+        cityFilter,
+        foremanFilter,
+        objectTypeFilter,
+        list,
+      });
+    }
+
     const { data: allProjectsRaw, error: projectsError } = await supabase
       .from("projects")
       .select("*");
 
     if (projectsError || !allProjectsRaw) {
+      if (projectsError && isDbUnavailableMessage(projectsError.message)) {
+        forceLocalDbMode();
+        return buildLocalProjectsResponse({
+          status,
+          search,
+          managerFilter,
+          clientFilter,
+          cityFilter,
+          foremanFilter,
+          objectTypeFilter,
+          list,
+        });
+      }
       console.error(projectsError);
       return NextResponse.json(
-        { error: "Ошибка загрузки проектов" },
+        {
+          error: `Ошибка загрузки проектов${
+            projectsError?.message ? `: ${projectsError.message}` : ""
+          }`,
+        },
         { status: 500 }
       );
     }
@@ -321,23 +369,169 @@ export async function GET(request: Request) {
     );
 
     return NextResponse.json(
-      { projects: withProgress, filter_options },
+      { projects: withProgress, filter_options, storage: "supabase" },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   } catch (e) {
     console.error(e);
-    return NextResponse.json(
-      { error: "Ошибка загрузки проектов" },
-      { status: 500 }
+    try {
+      forceLocalDbMode();
+      return buildLocalProjectsResponse({
+        status: null,
+        search: "",
+        managerFilter: "",
+        clientFilter: "",
+        cityFilter: "",
+        foremanFilter: "",
+        objectTypeFilter: "",
+        list: "active",
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Ошибка загрузки проектов" },
+        { status: 500 }
+      );
+    }
+  }
+}
+
+function buildLocalProjectsResponse(filters: {
+  status: string | null;
+  search: string;
+  managerFilter: string;
+  clientFilter: string;
+  cityFilter: string;
+  foremanFilter: string;
+  objectTypeFilter: string;
+  list: string;
+}) {
+  let projects = [...listProjectsLocal()];
+
+  if (filters.list === "active") {
+    projects = projects.filter((p) => !p.archived && p.status !== "completed");
+  } else if (filters.list === "completed") {
+    projects = projects.filter((p) => !p.archived && p.status === "completed");
+  } else if (filters.list === "archived") {
+    projects = projects.filter((p) => !!p.archived);
+  }
+
+  if (filters.status) projects = projects.filter((p) => p.status === filters.status);
+  if (filters.search) {
+    const q = filters.search;
+    projects = projects.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.client.toLowerCase().includes(q) ||
+        p.address.toLowerCase().includes(q)
     );
   }
+  if (filters.managerFilter)
+    projects = projects.filter((p) => p.manager === filters.managerFilter);
+  if (filters.clientFilter)
+    projects = projects.filter((p) => p.client === filters.clientFilter);
+  if (filters.objectTypeFilter)
+    projects = projects.filter((p) => p.object_type === filters.objectTypeFilter);
+  if (filters.cityFilter)
+    projects = projects.filter(
+      (p) => getCityFromAddress(p.address) === filters.cityFilter
+    );
+  if (filters.foremanFilter) {
+    projects = projects.filter((p) => {
+      if (p.foreman === filters.foremanFilter) return true;
+      return store
+        .getStages(p.id)
+        .some((s) => s.responsible === filters.foremanFilter);
+    });
+  }
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(todayStart);
+  todayEnd.setDate(todayEnd.getDate() + 1);
+
+  const withProgress = projects
+    .map((p) => {
+      const stages = store.getStages(p.id);
+      const photos = store.getPhotos(p.id);
+      const expenses = store.getExpenses(p.id);
+      const activityLog = store.getActivity(p.id);
+      const total = stages.length;
+      const completed = stages.filter((s) => s.status === "completed").length;
+      const active = stages.filter((s) => s.status === "in_progress").length;
+      const total_spent = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      const last = [
+        ...activityLog.map((a) => ({
+          date: new Date(a.created_at),
+          summary: a.details,
+        })),
+        { date: new Date(p.updated_at), summary: "Обновление проекта" },
+      ].sort((a, b) => b.date.getTime() - a.date.getTime())[0];
+
+      return {
+        ...p,
+        progress_percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+        active_stages: active,
+        total_stages: total,
+        completed_stages: completed,
+        preview_photos: photos.slice(0, 2).map((ph) => ({
+          file_path: ph.file_path,
+          comment: ph.comment,
+        })),
+        last_activity_at: last?.date.toISOString() ?? null,
+        last_activity_summary: last?.summary ?? null,
+        today_photos_count: photos.filter((ph) => {
+          const d = new Date(ph.created_at);
+          return d >= todayStart && d < todayEnd;
+        }).length,
+        total_spent,
+        budget_remaining: Number(p.budget) - total_spent,
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    );
+
+  const allForOptions = listProjectsLocal();
+  const filter_options = {
+    managers: [
+      ...new Set(allForOptions.map((p) => p.manager).filter(Boolean) as string[]),
+    ].sort(),
+    clients: [
+      ...new Set(allForOptions.map((p) => p.client).filter(Boolean)),
+    ] as string[],
+    cities: [
+      ...new Set(
+        allForOptions.map((p) => getCityFromAddress(p.address)).filter(Boolean)
+      ),
+    ].sort(),
+    responsibles: [
+      ...new Set(
+        [
+          ...(allForOptions.map((p) => p.foreman).filter(Boolean) as string[]),
+          ...allForOptions.flatMap((p) =>
+            store
+              .getStages(p.id)
+              .map((s) => s.responsible)
+              .filter(Boolean)
+          ),
+        ] as string[]
+      ),
+    ].sort(),
+  };
+
+  return NextResponse.json(
+    { projects: withProgress, filter_options, storage: "local" },
+    { headers: { "Cache-Control": "no-store, max-age=0" } }
+  );
 }
 
 export async function POST(request: Request) {
   const auth = await requireWriteAuth();
   if (!auth.ok) return auth.response;
+  let body: Record<string, unknown> = {};
   try {
-    const body = await request.json();
+    body = await request.json();
     const {
       name,
       client,
@@ -390,6 +584,36 @@ export async function POST(request: Request) {
         foreman != null && String(foreman).trim() ? String(foreman).trim() : null;
     }
 
+    const localCreate = () => {
+      forceLocalDbMode();
+      const id = createProjectLocal({
+        name: String(projectPayload.name),
+        client: String(projectPayload.client),
+        address: String(projectPayload.address),
+        phone: (projectPayload.phone as string | null) ?? null,
+        start_date: (projectPayload.start_date as string | null) ?? null,
+        planned_end_date:
+          (projectPayload.planned_end_date as string | null) ?? null,
+        status: String(projectPayload.status || "planning"),
+        budget: Number(projectPayload.budget) || 0,
+        manager: (projectPayload.manager as string | null) ?? null,
+        foreman: (projectPayload.foreman as string | null) ?? null,
+        object_type: (projectPayload.object_type as string | null) ?? null,
+        area_sqm:
+          projectPayload.area_sqm == null
+            ? null
+            : Number(projectPayload.area_sqm),
+        note: (projectPayload.note as string | null) ?? null,
+        actorName: actorName(auth.ctx),
+      });
+      return NextResponse.json({ id, storage: "local" });
+    };
+
+    const mode = await resolveDbMode();
+    if (mode === "local") {
+      return localCreate();
+    }
+
     // 1. Создаём проект
     let { data: inserted, error: insertError } = await supabase
       .from("projects")
@@ -409,8 +633,22 @@ export async function POST(request: Request) {
 
     if (insertError || !inserted) {
       console.error(insertError);
+      if (
+        insertError &&
+        isDbUnavailableMessage(insertError.message)
+      ) {
+        return localCreate();
+      }
+      // Network errors sometimes come without a clear message
+      if (!insertError || /fetch|network|ENOTFOUND|ECONN/i.test(String(insertError))) {
+        return localCreate();
+      }
       return NextResponse.json(
-        { error: "Ошибка создания проекта" },
+        {
+          error: `Ошибка создания проекта${
+            insertError?.message ? `: ${insertError.message}` : ""
+          }`,
+        },
         { status: 500 }
       );
     }
@@ -551,11 +789,42 @@ export async function POST(request: Request) {
       console.error(activityError);
     }
 
-    return NextResponse.json({ id: projectId });
+    return NextResponse.json({ id: projectId, storage: "supabase" });
   } catch (e) {
     console.error(e);
+    try {
+      if (body?.name && body?.client && body?.address) {
+        forceLocalDbMode();
+        const id = createProjectLocal({
+          name: String(body.name).trim(),
+          client: String(body.client).trim(),
+          address: String(body.address).trim(),
+          phone: (body.phone as string | null) ?? null,
+          start_date: (body.start_date as string | null) ?? null,
+          planned_end_date: (body.planned_end_date as string | null) ?? null,
+          status: String(body.status || "planning"),
+          budget: Number(body.budget) || 0,
+          manager: (body.manager as string | null) ?? null,
+          foreman: (body.foreman as string | null) ?? null,
+          object_type: (body.object_type as string | null) ?? null,
+          area_sqm:
+            body.area_sqm != null && body.area_sqm !== ""
+              ? Number(body.area_sqm)
+              : null,
+          note: (body.note as string | null) ?? null,
+          actorName: "Гость",
+        });
+        return NextResponse.json({ id, storage: "local" });
+      }
+    } catch (fallbackErr) {
+      console.error(fallbackErr);
+    }
     return NextResponse.json(
-      { error: "Ошибка создания проекта" },
+      {
+        error: `Ошибка создания проекта${
+          e instanceof Error && e.message ? `: ${e.message}` : ""
+        }`,
+      },
       { status: 500 }
     );
   }

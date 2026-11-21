@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 import { assertProjectAccess } from "@/lib/auth/projectAccess";
+import {
+  forceLocalDbMode,
+  isDbUnavailableMessage,
+  resolveDbMode,
+} from "@/lib/dbMode";
+import { getProjectLocal } from "@/lib/localProjects";
+import { store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +22,16 @@ export async function GET(
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
 
+    const mode = await resolveDbMode();
+    if (mode === "local") {
+      const local = getProjectLocal(id);
+      if (!local) return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
+      return NextResponse.json(
+        { ...local, storage: "local" },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
     const access = await assertProjectAccess(auth.ctx, id);
     if (!access.ok) return access.response;
 
@@ -26,9 +43,27 @@ export async function GET(
 
     if (projectError) {
       console.error(projectError);
+      if (isDbUnavailableMessage(projectError.message)) {
+        forceLocalDbMode();
+        const local = getProjectLocal(id);
+        if (!local) return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
+        return NextResponse.json(
+          { ...local, storage: "local" },
+          { headers: { "Cache-Control": "no-store" } }
+        );
+      }
       return NextResponse.json({ error: "Ошибка загрузки проекта" }, { status: 500 });
     }
-    if (!project) return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
+    if (!project) {
+      const local = getProjectLocal(id);
+      if (local) {
+        return NextResponse.json(
+          { ...local, storage: "local" },
+          { headers: { "Cache-Control": "no-store" } }
+        );
+      }
+      return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
+    }
 
     const [stagesRes, expensesRes, activityRes] = await Promise.all([
       supabase
@@ -137,6 +172,20 @@ export async function PATCH(
 
     updates.updated_at = new Date().toISOString();
 
+    const mode = await resolveDbMode();
+    if (mode === "local") {
+      store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
+      store.addActivity({
+        project_id: id,
+        action_type: "updated",
+        entity_type: "project",
+        entity_id: id,
+        details: "Обновлена информация по проекту",
+        user_name: actorName(auth.ctx),
+      });
+      return NextResponse.json({ ok: true, storage: "local" });
+    }
+
     let { error: updateError } = await supabase
       .from("projects")
       .update(updates)
@@ -152,6 +201,11 @@ export async function PATCH(
 
     if (updateError) {
       console.error(updateError);
+      if (isDbUnavailableMessage(updateError.message)) {
+        forceLocalDbMode();
+        store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
+        return NextResponse.json({ ok: true, storage: "local" });
+      }
       return NextResponse.json({ error: "Ошибка обновления" }, { status: 500 });
     }
 

@@ -21,6 +21,7 @@ export interface Project {
   status: ProjectStatus;
   budget: number;
   manager: string | null;
+  foreman?: string | null;
   object_type: string | null;
   area_sqm: number | null;
   note: string | null;
@@ -206,15 +207,28 @@ function save(store: Store) {
   }
 }
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __stroiuchot_store_cache: Store | undefined;
+}
+
 let cache: Store | null = null;
 
 function getStore(): Store {
+  if (globalThis.__stroiuchot_store_cache) {
+    cache = globalThis.__stroiuchot_store_cache;
+    return cache;
+  }
   if (!cache) cache = load();
+  globalThis.__stroiuchot_store_cache = cache;
   return cache;
 }
 
 function persist() {
-  if (cache) save(cache);
+  if (cache) {
+    globalThis.__stroiuchot_store_cache = cache;
+    save(cache);
+  }
 }
 
 // Экспортируем объект store со всеми методами
@@ -233,10 +247,11 @@ export const store = {
     const ts = now();
     const project: Project = {
       ...data,
-      phone: null,
-      object_type: null,
-      area_sqm: null,
-      note: null,
+      phone: data.phone ?? null,
+      object_type: data.object_type ?? null,
+      area_sqm: data.area_sqm ?? null,
+      note: data.note ?? null,
+      foreman: data.foreman ?? null,
       id,
       created_at: ts,
       updated_at: ts,

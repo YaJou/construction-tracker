@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { mergeProjectsWithClientLocal } from "@/lib/clientLocalStore";
 
 export interface ProjectListItem {
   id: number;
@@ -77,11 +78,19 @@ export function useProjects(
       if (!res.ok) throw new Error("Ошибка загрузки");
       const json = await res.json();
       if (requestId !== requestIdRef.current) return;
-      setData(json.projects ?? json);
+      const remote = (json.projects ?? json) as ProjectListItem[];
+      setData(mergeProjectsWithClientLocal(remote) as ProjectListItem[]);
       if (json.filter_options) setFilterOptions(json.filter_options);
     } catch (e) {
       if (requestId !== requestIdRef.current) return;
-      setError(e instanceof Error ? e.message : "Ошибка");
+      // Supabase down — still show locally created objects
+      const local = mergeProjectsWithClientLocal([]) as ProjectListItem[];
+      if (local.length > 0) {
+        setData(local);
+        setError(null);
+      } else {
+        setError(e instanceof Error ? e.message : "Ошибка");
+      }
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }

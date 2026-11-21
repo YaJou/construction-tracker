@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getClientLocalProject } from "@/lib/clientLocalStore";
 
 export interface StageSubstep {
   id: number;
@@ -64,11 +65,75 @@ export function useProject(id: number | null) {
     }
     try {
       const res = await fetch(`/api/projects/${id}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Проект не найден");
-      const json = await res.json();
-      setProject(json);
+      if (res.ok) {
+        const json = await res.json();
+        setProject(json);
+        return;
+      }
+      const local = getClientLocalProject(id);
+      if (local) {
+        setProject({
+          id: local.id,
+          name: local.name,
+          client: local.client,
+          address: local.address,
+          phone: local.phone,
+          start_date: local.start_date,
+          planned_end_date: local.planned_end_date,
+          status: local.status,
+          budget: local.budget,
+          manager: local.manager,
+          foreman: local.foreman,
+          object_type: local.object_type,
+          area_sqm: local.area_sqm,
+          note: local.note,
+          progress_percent: local.progress_percent ?? 0,
+          total_spent: local.total_spent ?? 0,
+          budget_remaining:
+            local.budget_remaining ?? (Number(local.budget) || 0),
+          stages: (local.stages as Stage[]) ?? [],
+          archived: local.archived,
+          last_activity: local.last_activity_at
+            ? {
+                created_at: local.last_activity_at,
+                details: local.last_activity_summary ?? null,
+              }
+            : null,
+          timeline_entries: [],
+        });
+        setError(null);
+        return;
+      }
+      throw new Error("Проект не найден");
     } catch (e) {
-      if (!opts?.silent) {
+      const local = getClientLocalProject(id);
+      if (local) {
+        setProject({
+          id: local.id,
+          name: local.name,
+          client: local.client,
+          address: local.address,
+          phone: local.phone,
+          start_date: local.start_date,
+          planned_end_date: local.planned_end_date,
+          status: local.status,
+          budget: local.budget,
+          manager: local.manager,
+          foreman: local.foreman,
+          object_type: local.object_type,
+          area_sqm: local.area_sqm,
+          note: local.note,
+          progress_percent: local.progress_percent ?? 0,
+          total_spent: local.total_spent ?? 0,
+          budget_remaining:
+            local.budget_remaining ?? (Number(local.budget) || 0),
+          stages: (local.stages as Stage[]) ?? [],
+          archived: local.archived,
+          last_activity: null,
+          timeline_entries: [],
+        });
+        setError(null);
+      } else if (!opts?.silent) {
         setError(e instanceof Error ? e.message : "Ошибка");
       }
     } finally {
