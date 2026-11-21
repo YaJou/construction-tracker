@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { DEFAULT_STAGES, PROJECT_STATUS_LABELS, STAGE_STATUS_LABELS } from "./constants";
+import { hasRemoteDb, sqlClient } from "./remoteDb";
 
 // На Vercel файловая система только для чтения, кроме /tmp — используем его для данных
 const isVercel = process.env.VERCEL === "1";
@@ -151,57 +152,82 @@ function getDefaultStore(): Store {
   };
 }
 
-function load(): Store {
+function normalizeStore(data: Partial<Store> | null | undefined): Store {
+  const defaultStore = getDefaultStore();
+  const defaultObjectTypes = defaultStore.settings.object_types;
+  const defaultSettings = defaultStore.settings;
+  if (!data || typeof data !== "object") return defaultStore;
+
+  const storeData = data as Store;
+  if (!Array.isArray(storeData.projects)) storeData.projects = [];
+  if (!Array.isArray(storeData.stages)) storeData.stages = [];
+  if (!Array.isArray(storeData.stage_substeps)) storeData.stage_substeps = [];
+  if (!Array.isArray(storeData.photos)) storeData.photos = [];
+  if (!Array.isArray(storeData.expenses)) storeData.expenses = [];
+  if (!Array.isArray(storeData.activity_log)) storeData.activity_log = [];
+  if (!storeData.seq) storeData.seq = { ...defaultStore.seq };
+  if (storeData.seq.substages == null) storeData.seq.substages = 0;
+  if (!storeData.settings) {
+    storeData.settings = defaultSettings;
+    storeData.seq.setting_stages = 1000;
+    storeData.seq.setting_managers = 1000;
+    storeData.seq.setting_object_types = 1000;
+  }
+  if (!storeData.settings.default_stages?.length)
+    storeData.settings.default_stages = defaultSettings.default_stages;
+  if (!storeData.settings.project_statuses?.length)
+    storeData.settings.project_statuses = defaultSettings.project_statuses;
+  if (!storeData.settings.stage_statuses?.length)
+    storeData.settings.stage_statuses = defaultSettings.stage_statuses;
+  if (!Array.isArray(storeData.settings.managers)) storeData.settings.managers = [];
+  if (
+    !Array.isArray(storeData.settings.object_types) ||
+    !storeData.settings.object_types.length
+  ) {
+    storeData.settings.object_types = defaultObjectTypes;
+  }
+  if (storeData.seq.setting_object_types == null) storeData.seq.setting_object_types = 1000;
+  if (storeData.seq.setting_stages == null)
+    storeData.seq.setting_stages = storeData.settings.default_stages.length
+      ? Math.max(...storeData.settings.default_stages.map((s) => s.id), 0) + 1
+      : 1000;
+  if (storeData.seq.setting_managers == null)
+    storeData.seq.setting_managers = storeData.settings.managers.length
+      ? Math.max(...storeData.settings.managers.map((m) => m.id), 0) + 1
+      : 1000;
+  if (storeData.seq.setting_object_types == null)
+    storeData.seq.setting_object_types = storeData.settings.object_types?.length
+      ? Math.max(...storeData.settings.object_types.map((o) => o.id), 0) + 1
+      : 1000;
+  if (storeData.seq.projects == null) storeData.seq.projects = storeData.projects.length;
+  if (storeData.seq.stages == null) storeData.seq.stages = storeData.stages.length;
+  storeData.projects.forEach((p) => {
+    if (p.phone === undefined) p.phone = null;
+    if (p.object_type === undefined) p.object_type = null;
+    if (p.area_sqm === undefined) p.area_sqm = null;
+    if (p.note === undefined) p.note = null;
+  });
+  return storeData;
+}
+
+function loadFromFile(): Store {
   try {
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   } catch {
     return getDefaultStore();
   }
-  const defaultStore = getDefaultStore();
-  const defaultObjectTypes = defaultStore.settings.object_types;
-  const defaultSettings = defaultStore.settings;
-
-  if (!fs.existsSync(dataFile)) return defaultStore;
-  let data: Store;
+  if (!fs.existsSync(dataFile)) return getDefaultStore();
   try {
-    data = JSON.parse(fs.readFileSync(dataFile, "utf-8"));
+    return normalizeStore(JSON.parse(fs.readFileSync(dataFile, "utf-8")));
   } catch {
-    return defaultStore;
+    return getDefaultStore();
   }
-  if (!Array.isArray(data.stage_substeps)) data.stage_substeps = [];
-  if (data.seq && data.seq.substages == null) data.seq.substages = 0;
-  if (!data.settings) {
-    data.settings = defaultSettings;
-    if (data.seq) {
-      data.seq.setting_stages = 1000;
-      data.seq.setting_managers = 1000;
-      data.seq.setting_object_types = 1000;
-    }
-  }
-  if (!data.settings.default_stages?.length) data.settings.default_stages = defaultSettings.default_stages;
-  if (!data.settings.project_statuses?.length) data.settings.project_statuses = defaultSettings.project_statuses;
-  if (!data.settings.stage_statuses?.length) data.settings.stage_statuses = defaultSettings.stage_statuses;
-  if (!Array.isArray(data.settings.managers)) data.settings.managers = [];
-  if (!Array.isArray(data.settings.object_types) || !data.settings.object_types.length) data.settings.object_types = defaultObjectTypes;
-  if (data.seq && data.seq.setting_object_types == null) data.seq.setting_object_types = 1000;
-  if (data.seq.setting_stages == null) data.seq.setting_stages = data.settings.default_stages.length ? Math.max(...data.settings.default_stages.map((s: { id: number }) => s.id), 0) + 1 : 1000;
-  if (data.seq.setting_managers == null) data.seq.setting_managers = data.settings.managers.length ? Math.max(...data.settings.managers.map((m: { id: number }) => m.id), 0) + 1 : 1000;
-  if (data.seq.setting_object_types == null) data.seq.setting_object_types = data.settings.object_types?.length ? Math.max(...data.settings.object_types.map((o: { id: number }) => o.id), 0) + 1 : 1000;
-  if (Array.isArray(data.projects)) {
-    data.projects.forEach((p: Project) => {
-      if (p.phone === undefined) p.phone = null;
-      if (p.object_type === undefined) p.object_type = null;
-      if (p.area_sqm === undefined) p.area_sqm = null;
-      if (p.note === undefined) p.note = null;
-    });
-  }
-  return data;
 }
 
-function save(store: Store) {
+function saveToFile(storeData: Store) {
   try {
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(dataFile, JSON.stringify(store, null, 0), "utf-8");
+    fs.writeFileSync(dataFile, JSON.stringify(storeData, null, 0), "utf-8");
   } catch (e) {
     console.error("[store] save failed:", e);
   }
@@ -213,21 +239,75 @@ declare global {
 }
 
 let cache: Store | null = null;
+let persistQueue: Promise<void> = Promise.resolve();
 
 function getStore(): Store {
   if (globalThis.__stroiuchot_store_cache) {
     cache = globalThis.__stroiuchot_store_cache;
     return cache;
   }
-  if (!cache) cache = load();
+  if (!cache) cache = loadFromFile();
   globalThis.__stroiuchot_store_cache = cache;
   return cache;
 }
 
-function persist() {
-  if (cache) {
+async function loadFromRemote(): Promise<Store> {
+  const sql = sqlClient();
+  const rows = (await sql`select data from app_store where id = 1`) as {
+    data: Partial<Store> | null;
+  }[];
+  const remote = rows[0]?.data;
+  if (remote && typeof remote === "object" && Object.keys(remote).length > 0) {
+    return normalizeStore(remote);
+  }
+  const fresh = getDefaultStore();
+  await sql`
+    insert into app_store (id, data, updated_at)
+    values (1, ${JSON.stringify(fresh)}::jsonb, now())
+    on conflict (id) do update
+      set data = excluded.data, updated_at = now()
+  `;
+  return fresh;
+}
+
+async function saveToRemote(storeData: Store) {
+  const sql = sqlClient();
+  await sql`
+    insert into app_store (id, data, updated_at)
+    values (1, ${JSON.stringify(storeData)}::jsonb, now())
+    on conflict (id) do update
+      set data = excluded.data, updated_at = now()
+  `;
+}
+
+/** Load shared state before local create/list (Neon when available). */
+export async function ensureStoreReady() {
+  if (!hasRemoteDb()) {
+    getStore();
+    return;
+  }
+  try {
+    cache = await loadFromRemote();
     globalThis.__stroiuchot_store_cache = cache;
-    save(cache);
+  } catch (e) {
+    console.error("[store] remote load failed, using file:", e);
+    getStore();
+  }
+}
+
+export async function flushStore() {
+  await persistQueue;
+}
+
+function persist() {
+  if (!cache) return;
+  globalThis.__stroiuchot_store_cache = cache;
+  saveToFile(cache);
+  if (hasRemoteDb()) {
+    const snapshot = cache;
+    persistQueue = persistQueue
+      .then(() => saveToRemote(snapshot))
+      .catch((e) => console.error("[store] remote save failed:", e));
   }
 }
 
@@ -480,7 +560,8 @@ export const store = {
   },
   
   load() {
-    cache = load();
+    cache = loadFromFile();
+    globalThis.__stroiuchot_store_cache = cache;
     return cache;
   },
 };

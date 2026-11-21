@@ -46,7 +46,7 @@ export async function GET(request: Request) {
     }
 
     if (usingLocal) {
-      return buildLocalProjectsResponse({
+      return await buildLocalProjectsResponse({
         status,
         search,
         managerFilter,
@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     if (projectsError || !allProjectsRaw) {
       if (projectsError && isDbUnavailableMessage(projectsError.message)) {
         forceLocalDbMode();
-        return buildLocalProjectsResponse({
+        return await buildLocalProjectsResponse({
           status,
           search,
           managerFilter,
@@ -376,7 +376,7 @@ export async function GET(request: Request) {
     console.error(e);
     try {
       forceLocalDbMode();
-      return buildLocalProjectsResponse({
+      return await buildLocalProjectsResponse({
         status: null,
         search: "",
         managerFilter: "",
@@ -395,7 +395,7 @@ export async function GET(request: Request) {
   }
 }
 
-function buildLocalProjectsResponse(filters: {
+async function buildLocalProjectsResponse(filters: {
   status: string | null;
   search: string;
   managerFilter: string;
@@ -405,7 +405,7 @@ function buildLocalProjectsResponse(filters: {
   objectTypeFilter: string;
   list: string;
 }) {
-  let projects = [...listProjectsLocal()];
+  let projects = [...(await listProjectsLocal())];
 
   if (filters.list === "active") {
     projects = projects.filter((p) => !p.archived && p.status !== "completed");
@@ -492,7 +492,7 @@ function buildLocalProjectsResponse(filters: {
         new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     );
 
-  const allForOptions = listProjectsLocal();
+  const allForOptions = await listProjectsLocal();
   const filter_options = {
     managers: [
       ...new Set(allForOptions.map((p) => p.manager).filter(Boolean) as string[]),
@@ -584,9 +584,9 @@ export async function POST(request: Request) {
         foreman != null && String(foreman).trim() ? String(foreman).trim() : null;
     }
 
-    const localCreate = () => {
+    const localCreate = async () => {
       forceLocalDbMode();
-      const id = createProjectLocal({
+      const id = await createProjectLocal({
         name: String(projectPayload.name),
         client: String(projectPayload.client),
         address: String(projectPayload.address),
@@ -611,7 +611,7 @@ export async function POST(request: Request) {
 
     const mode = await resolveDbMode();
     if (mode === "local") {
-      return localCreate();
+      return await localCreate();
     }
 
     // 1. Создаём проект
@@ -637,11 +637,11 @@ export async function POST(request: Request) {
         insertError &&
         isDbUnavailableMessage(insertError.message)
       ) {
-        return localCreate();
+        return await localCreate();
       }
       // Network errors sometimes come without a clear message
       if (!insertError || /fetch|network|ENOTFOUND|ECONN/i.test(String(insertError))) {
-        return localCreate();
+        return await localCreate();
       }
       return NextResponse.json(
         {
@@ -795,7 +795,7 @@ export async function POST(request: Request) {
     try {
       if (body?.name && body?.client && body?.address) {
         forceLocalDbMode();
-        const id = createProjectLocal({
+        const id = await createProjectLocal({
           name: String(body.name).trim(),
           client: String(body.client).trim(),
           address: String(body.address).trim(),

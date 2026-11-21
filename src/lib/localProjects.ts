@@ -1,6 +1,12 @@
 import { DEFAULT_STAGES, normalizeTemplateStageName } from "@/lib/constants";
 import { STAGE_TEMPLATES, formatSubstepName } from "@/lib/stageTemplates";
-import { store, type Project, type ProjectStatus } from "@/lib/store";
+import {
+  ensureStoreReady,
+  flushStore,
+  store,
+  type Project,
+  type ProjectStatus,
+} from "@/lib/store";
 
 export type CreateProjectInput = {
   name: string;
@@ -19,7 +25,8 @@ export type CreateProjectInput = {
   actorName?: string;
 };
 
-export function createProjectLocal(input: CreateProjectInput): number {
+export async function createProjectLocal(input: CreateProjectInput): Promise<number> {
+  await ensureStoreReady();
   const projectId = store.createProject({
     name: input.name,
     client: input.client,
@@ -66,14 +73,17 @@ export function createProjectLocal(input: CreateProjectInput): number {
     user_name: input.actorName || "Гость",
   });
 
+  await flushStore();
   return projectId;
 }
 
-export function listProjectsLocal(): Project[] {
+export async function listProjectsLocal(): Promise<Project[]> {
+  await ensureStoreReady();
   return store.getProjects();
 }
 
-export function getProjectLocal(id: number) {
+export async function getProjectLocal(id: number) {
+  await ensureStoreReady();
   const project = store.getProject(id);
   if (!project) return null;
   const stages = store.getStages(id).map((s) => ({

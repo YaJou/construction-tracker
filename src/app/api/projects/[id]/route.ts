@@ -8,7 +8,7 @@ import {
   resolveDbMode,
 } from "@/lib/dbMode";
 import { getProjectLocal } from "@/lib/localProjects";
-import { store } from "@/lib/store";
+import { ensureStoreReady, flushStore, store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export async function GET(
 
     const mode = await resolveDbMode();
     if (mode === "local") {
-      const local = getProjectLocal(id);
+      const local = await getProjectLocal(id);
       if (!local) return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
       return NextResponse.json(
         { ...local, storage: "local" },
@@ -45,7 +45,7 @@ export async function GET(
       console.error(projectError);
       if (isDbUnavailableMessage(projectError.message)) {
         forceLocalDbMode();
-        const local = getProjectLocal(id);
+        const local = await getProjectLocal(id);
         if (!local) return NextResponse.json({ error: "Проект не найден" }, { status: 404 });
         return NextResponse.json(
           { ...local, storage: "local" },
@@ -55,7 +55,7 @@ export async function GET(
       return NextResponse.json({ error: "Ошибка загрузки проекта" }, { status: 500 });
     }
     if (!project) {
-      const local = getProjectLocal(id);
+      const local = await getProjectLocal(id);
       if (local) {
         return NextResponse.json(
           { ...local, storage: "local" },
@@ -174,6 +174,7 @@ export async function PATCH(
 
     const mode = await resolveDbMode();
     if (mode === "local") {
+      await ensureStoreReady();
       store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
       store.addActivity({
         project_id: id,
@@ -183,6 +184,7 @@ export async function PATCH(
         details: "Обновлена информация по проекту",
         user_name: actorName(auth.ctx),
       });
+      await flushStore();
       return NextResponse.json({ ok: true, storage: "local" });
     }
 
@@ -203,7 +205,9 @@ export async function PATCH(
       console.error(updateError);
       if (isDbUnavailableMessage(updateError.message)) {
         forceLocalDbMode();
+        await ensureStoreReady();
         store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
+        await flushStore();
         return NextResponse.json({ ok: true, storage: "local" });
       }
       return NextResponse.json({ error: "Ошибка обновления" }, { status: 500 });
