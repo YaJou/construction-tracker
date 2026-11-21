@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { isGuestAccessEnabled } from "@/lib/auth/guest";
 
 const PUBLIC_PATHS = ["/", "/login"];
 const PUBLIC_PREFIXES = ["/api/health"];
@@ -7,7 +8,6 @@ const PUBLIC_PREFIXES = ["/api/health"];
 function isPublic(pathname: string) {
   if (PUBLIC_PATHS.includes(pathname)) return true;
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return true;
-  // Landing assets / next internals
   if (pathname.startsWith("/_next")) return true;
   if (pathname.startsWith("/favicon")) return true;
   return false;
@@ -25,12 +25,21 @@ function isAppPath(pathname: string) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const guestOk = isGuestAccessEnabled();
 
-  // Always refresh session cookies when possible
-  const { supabaseResponse, user } = await updateSession(request);
+  let supabaseResponse = NextResponse.next({ request });
+  let user: { id: string } | null = null;
+
+  try {
+    const session = await updateSession(request);
+    supabaseResponse = session.supabaseResponse;
+    user = session.user;
+  } catch (e) {
+    // Supabase auth can fail with "Load failed" — don't block the app in guest mode
+    console.warn("middleware session:", e);
+  }
 
   if (isPublic(pathname) && !pathname.startsWith("/api/")) {
-    // Logged-in user on /login → dashboard
     if (pathname === "/login" && user) {
       const url = request.nextUrl.clone();
       url.pathname = "/dashboard";
@@ -40,12 +49,11 @@ export async function middleware(request: NextRequest) {
   }
 
   if (isAppPath(pathname) && !user) {
-    // API → 401 JSON
+    if (guestOk) {
+      return supabaseResponse;
+    }
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        { error: "Требуется вход" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Требуется вход" }, { status: 401 });
     }
     const url = request.nextUrl.clone();
     url.pathname = "/login";

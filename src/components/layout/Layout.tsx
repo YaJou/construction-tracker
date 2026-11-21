@@ -54,7 +54,7 @@ function SidebarNav({
   settingsTab: string | null;
   onNavigate?: () => void;
 }) {
-  const { user, displayName, roleLabel, role, loading, signOut } = useAuth();
+  const { user, displayName, roleLabel, role, loading, signOut, isGuest } = useAuth();
   const initial = (displayName || "П").trim().charAt(0).toUpperCase();
   const showSettings = canManageSettings(role);
 
@@ -126,11 +126,11 @@ function SidebarNav({
               {loading ? "Загрузка…" : displayName}
             </p>
             <p className="text-caption text-muted truncate">
-              {user ? `Роль: ${roleLabel}` : "Не выполнен вход"}
+              {loading ? "…" : `Роль: ${roleLabel}`}
             </p>
           </div>
         </div>
-        {user ? (
+        {user && !isGuest ? (
           <button
             type="button"
             onClick={() => {
@@ -148,7 +148,7 @@ function SidebarNav({
             onClick={onNavigate}
             className="flex items-center gap-2 px-3 py-2 rounded-[10px] text-sm font-medium text-muted hover:bg-surface hover:text-ink transition-colors touch-target min-h-[42px]"
           >
-            Войти
+            {isGuest ? "Аккаунт" : "Войти"}
           </Link>
         )}
       </div>

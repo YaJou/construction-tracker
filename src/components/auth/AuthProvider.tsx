@@ -18,6 +18,7 @@ import {
   type AppRole,
   type Profile,
 } from "@/lib/auth/roles";
+import { guestProfile, isGuestAccessEnabled } from "@/lib/auth/guest";
 
 type AuthState = {
   user: User | null;
@@ -26,6 +27,7 @@ type AuthState = {
   displayName: string;
   roleLabel: string;
   role: AppRole | null;
+  isGuest: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -59,14 +61,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (refreshing.current) return;
     refreshing.current = true;
     try {
-      const supabase = createBrowserSupabase();
-      const {
-        data: { user: u },
-      } = await supabase.auth.getUser();
+      let u: User | null = null;
+      try {
+        const supabase = createBrowserSupabase();
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        u = authUser;
+      } catch {
+        u = null;
+      }
       setUser(u);
 
       if (!u) {
-        setProfile(null);
+        setProfile(isGuestAccessEnabled() ? guestProfile() : null);
         return;
       }
 
@@ -93,45 +101,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const supabase = createBrowserSupabase();
     let mounted = true;
+    let subscription: { unsubscribe: () => void } | null = null;
 
     (async () => {
       await refresh();
       if (mounted) setLoading(false);
     })();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      // Skip noisy token refresh storms; still refresh on sign in/out
-      if (event === "TOKEN_REFRESHED") return;
-      refresh();
-    });
+    try {
+      const supabase = createBrowserSupabase();
+      const { data } = supabase.auth.onAuthStateChange((event) => {
+        if (event === "TOKEN_REFRESHED") return;
+        refresh();
+      });
+      subscription = data.subscription;
+    } catch {
+      // Auth client unavailable — guest mode still works
+    }
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [refresh]);
 
   const signOut = useCallback(async () => {
-    const supabase = createBrowserSupabase();
-    await supabase.auth.signOut();
+    try {
+      const supabase = createBrowserSupabase();
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
+    }
     setUser(null);
-    setProfile(null);
-    window.location.href = "/login";
+    setProfile(isGuestAccessEnabled() ? guestProfile() : null);
+    window.location.href = isGuestAccessEnabled() ? "/dashboard" : "/login";
   }, []);
 
   const value = useMemo<AuthState>(() => {
     const role = profile?.role ?? null;
+    const isGuest = !user && isGuestAccessEnabled();
     return {
       user,
       profile,
       loading,
-      displayName: displayName(profile, user?.email),
-      roleLabel: loading ? "…" : role ? ROLE_LABELS[role] : "Гость",
-      role,
+      displayName: isGuest
+        ? "Гость"
+        : displayName(profile, user?.email),
+      roleLabel: loading ? "…" : isGuest ? "Гость" : role ? ROLE_LABELS[role] : "Гость",
+      role: isGuest ? "owner" : role,
+      isGuest,
       refresh,
       signOut,
     };

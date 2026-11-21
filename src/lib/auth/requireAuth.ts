@@ -3,6 +3,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { supabase as anonSupabase } from "@/lib/supabaseClient";
 import type { AppRole, Profile } from "@/lib/auth/roles";
 import { canManageSettings, canWrite } from "@/lib/auth/roles";
+import { guestProfile, guestUser, isGuestAccessEnabled } from "@/lib/auth/guest";
 
 export type AuthContext = {
   user: { id: string; email?: string };
@@ -82,6 +83,22 @@ async function ensureProfile(
   };
 }
 
+async function guestContext(): Promise<AuthContext> {
+  // Prefer a real server client when available; fall back to anon for DB writes
+  let supabase: Awaited<ReturnType<typeof createServerSupabase>>;
+  try {
+    supabase = await createServerSupabase();
+  } catch {
+    supabase = anonSupabase as unknown as Awaited<ReturnType<typeof createServerSupabase>>;
+  }
+  return {
+    user: guestUser(),
+    profile: guestProfile(),
+    supabase,
+    db: anonSupabase,
+  };
+}
+
 export async function requireAuth(): Promise<
   { ok: true; ctx: AuthContext } | { ok: false; response: NextResponse }
 > {
@@ -93,6 +110,9 @@ export async function requireAuth(): Promise<
     } = await supabase.auth.getUser();
 
     if (error || !user) {
+      if (isGuestAccessEnabled()) {
+        return { ok: true, ctx: await guestContext() };
+      }
       return {
         ok: false,
         response: NextResponse.json(
@@ -127,6 +147,9 @@ export async function requireAuth(): Promise<
     };
   } catch (e) {
     console.error("requireAuth", e);
+    if (isGuestAccessEnabled()) {
+      return { ok: true, ctx: await guestContext() };
+    }
     return {
       ok: false,
       response: NextResponse.json({ error: "Ошибка авторизации" }, { status: 500 }),
