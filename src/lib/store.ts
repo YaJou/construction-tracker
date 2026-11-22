@@ -250,6 +250,8 @@ const STORE_READ_TTL_MS = 2500;
 
 let cache: Store | null = null;
 let persistQueue: Promise<void> = Promise.resolve();
+let batchDepth = 0;
+let batchDirty = false;
 
 function getStore(): Store {
   if (globalThis.__stroiuchot_store_cache) {
@@ -265,6 +267,21 @@ function touchCache(storeData: Store) {
   cache = storeData;
   globalThis.__stroiuchot_store_cache = storeData;
   globalThis.__stroiuchot_store_loaded_at = Date.now();
+}
+
+/** Run many mutations with a single Neon write at the end. */
+export async function withStoreBatch<T>(fn: () => T | Promise<T>): Promise<T> {
+  batchDepth += 1;
+  try {
+    const result = await fn();
+    return result;
+  } finally {
+    batchDepth -= 1;
+    if (batchDepth === 0 && batchDirty) {
+      batchDirty = false;
+      persistNow();
+    }
+  }
 }
 
 async function loadFromRemote(): Promise<Store> {
@@ -320,19 +337,33 @@ export async function ensureStoreReady() {
 }
 
 export async function flushStore() {
+  if (batchDepth === 0 && batchDirty) {
+    batchDirty = false;
+    persistNow();
+  }
   await persistQueue;
 }
 
-function persist() {
+function persistNow() {
   if (!cache) return;
   touchCache(cache);
   saveToFile(cache);
   if (hasRemoteDb()) {
-    const snapshot = cache;
+    const snapshot = JSON.parse(JSON.stringify(cache)) as Store;
     persistQueue = persistQueue
       .then(() => saveToRemote(snapshot))
       .catch((e) => console.error("[store] remote save failed:", e));
   }
+}
+
+function persist() {
+  if (!cache) return;
+  globalThis.__stroiuchot_store_cache = cache;
+  if (batchDepth > 0) {
+    batchDirty = true;
+    return;
+  }
+  persistNow();
 }
 
 // Экспортируем объект store со всеми методами

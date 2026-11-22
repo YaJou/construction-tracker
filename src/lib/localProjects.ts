@@ -4,6 +4,7 @@ import {
   ensureStoreReady,
   flushStore,
   store,
+  withStoreBatch,
   type Project,
   type ProjectStatus,
 } from "@/lib/store";
@@ -27,50 +28,55 @@ export type CreateProjectInput = {
 
 export async function createProjectLocal(input: CreateProjectInput): Promise<number> {
   await ensureStoreReady();
-  const projectId = store.createProject({
-    name: input.name,
-    client: input.client,
-    address: input.address,
-    phone: input.phone ?? null,
-    start_date: input.start_date ?? null,
-    planned_end_date: input.planned_end_date ?? null,
-    status: (input.status as ProjectStatus) || "planning",
-    budget: input.budget ?? 0,
-    manager: input.manager ?? null,
-    foreman: input.foreman ?? null,
-    object_type: input.object_type ?? null,
-    area_sqm: input.area_sqm ?? null,
-    note: input.note ?? null,
-  });
+  const projectId = await withStoreBatch(() => {
+    const id = store.createProject({
+      name: input.name,
+      client: input.client,
+      address: input.address,
+      phone: input.phone ?? null,
+      start_date: input.start_date ?? null,
+      planned_end_date: input.planned_end_date ?? null,
+      status: (input.status as ProjectStatus) || "planning",
+      budget: input.budget ?? 0,
+      manager: input.manager ?? null,
+      foreman: input.foreman ?? null,
+      object_type: input.object_type ?? null,
+      area_sqm: input.area_sqm ?? null,
+      note: input.note ?? null,
+    });
 
-  const settings = store.getSettings();
-  const stageNames =
-    settings.default_stages?.length > 0
-      ? [...settings.default_stages]
-          .sort((a, b) => a.order_index - b.order_index)
-          .map((s) => normalizeTemplateStageName(s.name))
-      : DEFAULT_STAGES.map((n) => normalizeTemplateStageName(n));
+    const settings = store.getSettings();
+    const stageNames =
+      settings.default_stages?.length > 0
+        ? [...settings.default_stages]
+            .sort((a, b) => a.order_index - b.order_index)
+            .map((s) => normalizeTemplateStageName(s.name))
+        : DEFAULT_STAGES.map((n) => normalizeTemplateStageName(n));
 
-  store.initStagesForProject(projectId, stageNames);
+    store.initStagesForProject(id, stageNames);
 
-  const stages = store.getStages(projectId);
-  for (const stage of stages) {
-    const tpl = STAGE_TEMPLATES.find(
-      (t) => t.name === stage.name || normalizeTemplateStageName(t.name) === stage.name
-    );
-    const names = tpl ? tpl.substeps.map((s) => formatSubstepName(s)) : [];
-    for (const name of names) {
-      store.addSubstep(stage.id, name);
+    const stages = store.getStages(id);
+    for (const stage of stages) {
+      const tpl = STAGE_TEMPLATES.find(
+        (t) =>
+          t.name === stage.name || normalizeTemplateStageName(t.name) === stage.name
+      );
+      const names = tpl ? tpl.substeps.map((s) => formatSubstepName(s)) : [];
+      for (const name of names) {
+        store.addSubstep(stage.id, name);
+      }
     }
-  }
 
-  store.addActivity({
-    project_id: projectId,
-    action_type: "created",
-    entity_type: "project",
-    entity_id: projectId,
-    details: "Создан проект",
-    user_name: input.actorName || "Гость",
+    store.addActivity({
+      project_id: id,
+      action_type: "created",
+      entity_type: "project",
+      entity_id: id,
+      details: "Создан проект",
+      user_name: input.actorName || "Гость",
+    });
+
+    return id;
   });
 
   await flushStore();

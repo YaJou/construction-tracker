@@ -8,7 +8,7 @@ import {
   isDbUnavailableMessage,
   resolveDbMode,
 } from "@/lib/dbMode";
-import { ensureStoreReady, flushStore, store } from "@/lib/store";
+import { ensureStoreReady, flushStore, store, withStoreBatch } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -176,30 +176,32 @@ export async function POST(request: Request) {
 
       if (useLocal) {
         await ensureStoreReady();
-        if (replace) store.clearExpenses(projectId);
-        store.addExpensesBulk(
-          lines.map((r) => ({
-            project_id: projectId,
-            date: r.date,
-            category: r.category,
-            description: r.description,
-            subcategory: r.subcategory,
-            quantity: r.quantity,
-            unit_price: r.unit_price,
-            unit: r.unit,
-            kind: r.kind,
-            amount: r.amount,
-            added_by: r.added_by,
-          }))
-        );
         const total = lines.reduce((s, r) => s + r.amount, 0);
-        store.addActivity({
-          project_id: projectId,
-          action_type: "created",
-          entity_type: "expense",
-          entity_id: projectId,
-          details: `Заполнена детальная смета: ${lines.length} позиций на ${Math.round(total).toLocaleString("ru-RU")} ₽`,
-          user_name: addedBy,
+        await withStoreBatch(() => {
+          if (replace) store.clearExpenses(projectId);
+          store.addExpensesBulk(
+            lines.map((r) => ({
+              project_id: projectId,
+              date: r.date,
+              category: r.category,
+              description: r.description,
+              subcategory: r.subcategory,
+              quantity: r.quantity,
+              unit_price: r.unit_price,
+              unit: r.unit,
+              kind: r.kind,
+              amount: r.amount,
+              added_by: r.added_by,
+            }))
+          );
+          store.addActivity({
+            project_id: projectId,
+            action_type: "created",
+            entity_type: "expense",
+            entity_id: projectId,
+            details: `Заполнена детальная смета: ${lines.length} позиций на ${Math.round(total).toLocaleString("ru-RU")} ₽`,
+            user_name: addedBy,
+          });
         });
         await flushStore();
         return NextResponse.json({
