@@ -236,7 +236,11 @@ function saveToFile(storeData: Store) {
 declare global {
   // eslint-disable-next-line no-var
   var __stroiuchot_store_cache: Store | undefined;
+  // eslint-disable-next-line no-var
+  var __stroiuchot_store_loaded_at: number | undefined;
 }
+
+const STORE_READ_TTL_MS = 2500;
 
 let cache: Store | null = null;
 let persistQueue: Promise<void> = Promise.resolve();
@@ -249,6 +253,12 @@ function getStore(): Store {
   if (!cache) cache = loadFromFile();
   globalThis.__stroiuchot_store_cache = cache;
   return cache;
+}
+
+function touchCache(storeData: Store) {
+  cache = storeData;
+  globalThis.__stroiuchot_store_cache = storeData;
+  globalThis.__stroiuchot_store_loaded_at = Date.now();
 }
 
 async function loadFromRemote(): Promise<Store> {
@@ -286,12 +296,20 @@ export async function ensureStoreReady() {
     getStore();
     return;
   }
+  const loadedAt = globalThis.__stroiuchot_store_loaded_at ?? 0;
+  if (
+    globalThis.__stroiuchot_store_cache &&
+    Date.now() - loadedAt < STORE_READ_TTL_MS
+  ) {
+    cache = globalThis.__stroiuchot_store_cache;
+    return;
+  }
   try {
-    cache = await loadFromRemote();
-    globalThis.__stroiuchot_store_cache = cache;
+    touchCache(await loadFromRemote());
   } catch (e) {
     console.error("[store] remote load failed, using file:", e);
     getStore();
+    globalThis.__stroiuchot_store_loaded_at = Date.now();
   }
 }
 
@@ -301,7 +319,7 @@ export async function flushStore() {
 
 function persist() {
   if (!cache) return;
-  globalThis.__stroiuchot_store_cache = cache;
+  touchCache(cache);
   saveToFile(cache);
   if (hasRemoteDb()) {
     const snapshot = cache;

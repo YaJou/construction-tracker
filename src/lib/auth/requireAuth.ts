@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { supabase as anonSupabase } from "@/lib/supabaseClient";
 import type { AppRole, Profile } from "@/lib/auth/roles";
 import { canManageSettings, canWrite } from "@/lib/auth/roles";
 import { guestProfile, guestUser, isGuestAccessEnabled } from "@/lib/auth/guest";
+import { hasSupabaseAuthCookie } from "@/lib/auth/sessionCookie";
 
 export type AuthContext = {
   user: { id: string; email?: string };
@@ -84,17 +86,11 @@ async function ensureProfile(
 }
 
 async function guestContext(): Promise<AuthContext> {
-  // Prefer a real server client when available; fall back to anon for DB writes
-  let supabase: Awaited<ReturnType<typeof createServerSupabase>>;
-  try {
-    supabase = await createServerSupabase();
-  } catch {
-    supabase = anonSupabase as unknown as Awaited<ReturnType<typeof createServerSupabase>>;
-  }
+  // Avoid creating a Supabase server client when auth host is dead
   return {
     user: guestUser(),
     profile: guestProfile(),
-    supabase,
+    supabase: anonSupabase as unknown as Awaited<ReturnType<typeof createServerSupabase>>,
     db: anonSupabase,
   };
 }
@@ -103,6 +99,13 @@ export async function requireAuth(): Promise<
   { ok: true; ctx: AuthContext } | { ok: false; response: NextResponse }
 > {
   try {
+    if (isGuestAccessEnabled()) {
+      const cookieStore = await cookies();
+      if (!hasSupabaseAuthCookie(cookieStore)) {
+        return { ok: true, ctx: await guestContext() };
+      }
+    }
+
     const supabase = await createServerSupabase();
     const {
       data: { user },

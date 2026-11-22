@@ -34,6 +34,8 @@ export interface FilterOptions {
 
 export type ProjectListType = "active" | "completed" | "archived";
 
+const STALE_MS = 15_000;
+
 export function useProjects(
   listType?: ProjectListType,
   statusFilter?: string,
@@ -54,11 +56,16 @@ export function useProjects(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const fetchedAtRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchProjects = useCallback(async () => {
+  const fetchProjects = useCallback(async (opts?: { silent?: boolean }) => {
     const requestId = ++requestIdRef.current;
-    setLoading(true);
-    setError(null);
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const params = new URLSearchParams();
       if (listType) params.set("list", listType);
@@ -69,7 +76,6 @@ export function useProjects(
       if (city) params.set("city", city);
       if (foreman) params.set("foreman", foreman);
       if (objectType) params.set("object_type", objectType);
-      // bust any intermediate HTTP/CDN cache
       params.set("_t", String(Date.now()));
       const res = await fetch(`/api/projects?${params}`, {
         cache: "no-store",
@@ -81,18 +87,20 @@ export function useProjects(
       const remote = (json.projects ?? json) as ProjectListItem[];
       setData(mergeProjectsWithClientLocal(remote) as ProjectListItem[]);
       if (json.filter_options) setFilterOptions(json.filter_options);
+      fetchedAtRef.current = Date.now();
+      setError(null);
     } catch (e) {
       if (requestId !== requestIdRef.current) return;
-      // Supabase down — still show locally created objects
       const local = mergeProjectsWithClientLocal([]) as ProjectListItem[];
       if (local.length > 0) {
         setData(local);
         setError(null);
-      } else {
+        fetchedAtRef.current = Date.now();
+      } else if (!silent) {
         setError(e instanceof Error ? e.message : "Ошибка");
       }
     } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
+      if (requestId === requestIdRef.current && !silent) setLoading(false);
     }
   }, [listType, statusFilter, search, manager, client, city, foreman, objectType]);
 
@@ -100,21 +108,27 @@ export function useProjects(
     fetchProjects();
   }, [fetchProjects]);
 
-  // Next.js client cache can restore dashboard without remounting;
-  // refetch when user returns to the tab/window.
   useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState === "visible") fetchProjects();
+    const refreshIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - fetchedAtRef.current < STALE_MS) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        fetchProjects({ silent: true });
+      }, 1200);
     };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refreshIfStale);
     return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refreshIfStale);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [fetchProjects]);
 
-  return { projects: data, filterOptions, loading, error, refetch: fetchProjects };
+  return {
+    projects: data,
+    filterOptions,
+    loading,
+    error,
+    refetch: () => fetchProjects({ silent: true }),
+  };
 }

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { isGuestAccessEnabled } from "@/lib/auth/guest";
+import { hasSupabaseAuthCookie } from "@/lib/auth/sessionCookie";
 
 const PUBLIC_PATHS = ["/", "/login"];
 const PUBLIC_PREFIXES = ["/api/health"];
@@ -26,6 +27,18 @@ function isAppPath(pathname: string) {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const guestOk = isGuestAccessEnabled();
+  const hasSessionCookie = hasSupabaseAuthCookie(request.cookies);
+
+  // Guest mode without a login cookie — skip dead Supabase auth round-trip
+  if (guestOk && !hasSessionCookie) {
+    if (isPublic(pathname) && !pathname.startsWith("/api/")) {
+      return NextResponse.next({ request });
+    }
+    if (isAppPath(pathname)) {
+      return NextResponse.next({ request });
+    }
+    return NextResponse.next({ request });
+  }
 
   let supabaseResponse = NextResponse.next({ request });
   let user: { id: string } | null = null;

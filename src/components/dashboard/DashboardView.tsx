@@ -155,34 +155,52 @@ export default function DashboardPage() {
     setObjectTypeFilter(objectTypeFromUrl);
   }, [objectTypeFromUrl]);
 
-  const loadToday = useCallback(() => {
-    setTodayLoading(true);
+  const todayFetchedAt = useRef(0);
+  const periodFetchedAt = useRef(0);
+  const dashDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadToday = useCallback((opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) setTodayLoading(true);
     return fetch(`/api/activity/today?_t=${Date.now()}`, {
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" },
     })
       .then((r) => r.json())
-      .then((data) => setTodayData(data))
-      .catch(() => setTodayData(null))
-      .finally(() => setTodayLoading(false));
+      .then((data) => {
+        setTodayData(data);
+        todayFetchedAt.current = Date.now();
+      })
+      .catch(() => {
+        if (!silent) setTodayData(null);
+      })
+      .finally(() => {
+        if (!silent) setTodayLoading(false);
+      });
   }, []);
 
-  const loadPeriodStats = useCallback(() => {
-    setPeriodLoading(true);
+  const loadPeriodStats = useCallback((opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) setPeriodLoading(true);
     return fetch(`/api/dashboard/kpi?period=${period}&_t=${Date.now()}`, {
       cache: "no-store",
     })
       .then((r) => r.json())
-      .then((json) =>
+      .then((json) => {
         setPeriodStats({
           spent_in_period: Number(json.spent_in_period) || 0,
           completed_stages_this_month: Number(json.completed_stages_this_month) || 0,
           budget: Number(json.budget) || 0,
           active_count: Number(json.active_count) || 0,
-        })
-      )
-      .catch(() => setPeriodStats(null))
-      .finally(() => setPeriodLoading(false));
+        });
+        periodFetchedAt.current = Date.now();
+      })
+      .catch(() => {
+        if (!silent) setPeriodStats(null);
+      })
+      .finally(() => {
+        if (!silent) setPeriodLoading(false);
+      });
   }, [period]);
 
   useEffect(() => {
@@ -194,17 +212,23 @@ export default function DashboardPage() {
   }, [loadPeriodStats, pathname]);
 
   useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState === "visible") {
-        loadToday();
-        loadPeriodStats();
-      }
+    const STALE_MS = 15_000;
+    const refreshIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      const todayStale = now - todayFetchedAt.current >= STALE_MS;
+      const periodStale = now - periodFetchedAt.current >= STALE_MS;
+      if (!todayStale && !periodStale) return;
+      if (dashDebounce.current) clearTimeout(dashDebounce.current);
+      dashDebounce.current = setTimeout(() => {
+        if (todayStale) loadToday({ silent: true });
+        if (periodStale) loadPeriodStats({ silent: true });
+      }, 1200);
     };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    document.addEventListener("visibilitychange", refreshIfStale);
     return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      document.removeEventListener("visibilitychange", refreshIfStale);
+      if (dashDebounce.current) clearTimeout(dashDebounce.current);
     };
   }, [loadToday, loadPeriodStats]);
 
