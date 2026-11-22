@@ -3,6 +3,12 @@ import { supabase } from "@/lib/supabaseClient";
 import { actorName, requireAuth, requireWriteAuth } from "@/lib/auth/requireAuth";
 import { assertProjectAccess } from "@/lib/auth/projectAccess";
 import { lineAmount } from "@/lib/smetaTemplates";
+import {
+  forceLocalDbMode,
+  isDbUnavailableMessage,
+  resolveDbMode,
+} from "@/lib/dbMode";
+import { ensureStoreReady, flushStore, store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +48,34 @@ function optionalNumber(v: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
+async function localExpensesPayload(projectId: number) {
+  await ensureStoreReady();
+  const project = store.getProject(projectId);
+  const list = store.getExpenses(projectId);
+  const budget = Number(project?.budget ?? 0);
+  const hasBudget = Number.isFinite(budget) && budget > 0;
+  const totalSpent = list.reduce((sum, e) => sum + Number(e.amount), 0);
+  return NextResponse.json(
+    {
+      expenses: list,
+      total_spent: totalSpent,
+      budget: hasBudget ? budget : 0,
+      has_budget: hasBudget,
+      budget_remaining: hasBudget ? budget - totalSpent : null,
+      project: project
+        ? {
+            name: project.name,
+            address: project.address,
+            client: project.client,
+            manager: project.manager,
+          }
+        : null,
+      storage: "local",
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -50,6 +84,11 @@ export async function GET(
   if (!auth.ok) return auth.response;
   try {
     const projectId = Number((await params).id);
+    const mode = await resolveDbMode();
+    if (mode === "local") {
+      return localExpensesPayload(projectId);
+    }
+
     const access = await assertProjectAccess(auth.ctx, projectId);
     if (!access.ok) return access.response;
     const [{ data: expenses, error: expensesError }, { data: project }] =
@@ -59,11 +98,19 @@ export async function GET(
           .select("*")
           .eq("project_id", projectId)
           .order("created_at", { ascending: true }),
-        supabase.from("projects").select("budget, name, address, client, manager").eq("id", projectId).maybeSingle(),
+        supabase
+          .from("projects")
+          .select("budget, name, address, client, manager")
+          .eq("id", projectId)
+          .maybeSingle(),
       ]);
 
     if (expensesError) {
       console.error(expensesError);
+      if (isDbUnavailableMessage(expensesError.message)) {
+        forceLocalDbMode();
+        return localExpensesPayload(projectId);
+      }
       return NextResponse.json({ error: "Ошибка загрузки расходов" }, { status: 500 });
     }
 
@@ -91,7 +138,13 @@ export async function GET(
     );
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Ошибка загрузки расходов" }, { status: 500 });
+    try {
+      forceLocalDbMode();
+      const projectId = Number((await params).id);
+      return await localExpensesPayload(projectId);
+    } catch {
+      return NextResponse.json({ error: "Ошибка загрузки расходов" }, { status: 500 });
+    }
   }
 }
 
@@ -103,11 +156,14 @@ export async function POST(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
-    const access = await assertProjectAccess(auth.ctx, projectId);
-    if (!access.ok) return access.response;
+    const mode = await resolveDbMode();
+    const useLocal = mode === "local";
+    if (!useLocal) {
+      const access = await assertProjectAccess(auth.ctx, projectId);
+      if (!access.ok) return access.response;
+    }
     const body = await request.json();
 
-    // Bulk seed detailed spreadsheet-style estimate
     if (body?.action === "seed_detailed") {
       const { buildDetailedSmetaExpenseRows } = await import("@/lib/smetaTemplates");
       const replace = body.replace !== false;
@@ -116,10 +172,43 @@ export async function POST(request: Request) {
           ? body.date
           : new Date().toISOString().slice(0, 10);
       const addedBy = actorName(auth.ctx);
-      const lines = buildDetailedSmetaExpenseRows(date, addedBy).map((r) => ({
-        ...r,
-        project_id: projectId,
-      }));
+      const lines = buildDetailedSmetaExpenseRows(date, addedBy);
+
+      if (useLocal) {
+        await ensureStoreReady();
+        if (replace) store.clearExpenses(projectId);
+        store.addExpensesBulk(
+          lines.map((r) => ({
+            project_id: projectId,
+            date: r.date,
+            category: r.category,
+            description: r.description,
+            subcategory: r.subcategory,
+            quantity: r.quantity,
+            unit_price: r.unit_price,
+            unit: r.unit,
+            kind: r.kind,
+            amount: r.amount,
+            added_by: r.added_by,
+          }))
+        );
+        const total = lines.reduce((s, r) => s + r.amount, 0);
+        store.addActivity({
+          project_id: projectId,
+          action_type: "created",
+          entity_type: "expense",
+          entity_id: projectId,
+          details: `Заполнена детальная смета: ${lines.length} позиций на ${Math.round(total).toLocaleString("ru-RU")} ₽`,
+          user_name: addedBy,
+        });
+        await flushStore();
+        return NextResponse.json({
+          ok: true,
+          count: lines.length,
+          total,
+          storage: "local",
+        });
+      }
 
       if (replace) {
         const { error: delError } = await supabase
@@ -127,17 +216,71 @@ export async function POST(request: Request) {
           .delete()
           .eq("project_id", projectId);
         if (delError) {
+          if (isDbUnavailableMessage(delError.message)) {
+            forceLocalDbMode();
+            await ensureStoreReady();
+            store.clearExpenses(projectId);
+            store.addExpensesBulk(
+              lines.map((r) => ({
+                project_id: projectId,
+                date: r.date,
+                category: r.category,
+                description: r.description,
+                subcategory: r.subcategory,
+                quantity: r.quantity,
+                unit_price: r.unit_price,
+                unit: r.unit,
+                kind: r.kind,
+                amount: r.amount,
+                added_by: r.added_by,
+              }))
+            );
+            await flushStore();
+            return NextResponse.json({
+              ok: true,
+              count: lines.length,
+              total: lines.reduce((s, r) => s + r.amount, 0),
+              storage: "local",
+            });
+          }
           return NextResponse.json({ error: delError.message }, { status: 500 });
         }
       }
 
       const { data: inserted, error: insertError } = await supabase
         .from("expenses")
-        .insert(lines)
+        .insert(lines.map((r) => ({ ...r, project_id: projectId })))
         .select("id");
 
       if (insertError) {
         console.error(insertError);
+        if (isDbUnavailableMessage(insertError.message)) {
+          forceLocalDbMode();
+          await ensureStoreReady();
+          if (replace) store.clearExpenses(projectId);
+          store.addExpensesBulk(
+            lines.map((r) => ({
+              project_id: projectId,
+              date: r.date,
+              category: r.category,
+              description: r.description,
+              subcategory: r.subcategory,
+              quantity: r.quantity,
+              unit_price: r.unit_price,
+              unit: r.unit,
+              kind: r.kind,
+              amount: r.amount,
+              added_by: r.added_by,
+            }))
+          );
+          await flushStore();
+          return NextResponse.json({
+            ok: true,
+            count: lines.length,
+            total: lines.reduce((s, r) => s + r.amount, 0),
+            storage: "local",
+          });
+        }
         const msg = /subcategory|unit_price|quantity|column|schema cache/i.test(
           insertError.message || ""
         )
@@ -176,6 +319,36 @@ export async function POST(request: Request) {
 
     const addedBy = added_by || actorName(auth.ctx);
     const subcategory = optionalText(body.subcategory) || optionalText(description);
+    const expenseRow = {
+      project_id: projectId,
+      date: String(date),
+      category: String(category),
+      description: subcategory,
+      subcategory,
+      quantity: optionalNumber(body.quantity),
+      unit_price: optionalNumber(body.unit_price),
+      unit: optionalText(body.unit),
+      kind: optionalText(body.kind),
+      amount: Number(amount),
+      added_by: addedBy,
+    };
+
+    if (useLocal) {
+      await ensureStoreReady();
+      const id = store.addExpense(expenseRow);
+      const label = subcategory ? `${category} / ${subcategory}` : category;
+      store.addActivity({
+        project_id: projectId,
+        action_type: "created",
+        entity_type: "expense",
+        entity_id: id,
+        details: `Добавлена позиция сметы: ${label} — ${amount} ₽`,
+        user_name: addedBy,
+      });
+      await flushStore();
+      return NextResponse.json({ id, storage: "local" });
+    }
+
     const row: Record<string, unknown> = {
       project_id: projectId,
       date: String(date),
@@ -184,8 +357,6 @@ export async function POST(request: Request) {
       amount: Number(amount),
       added_by: addedBy,
     };
-
-    // New smeta fields — retry without them if columns missing
     const extended = {
       ...row,
       subcategory,
@@ -214,6 +385,13 @@ export async function POST(request: Request) {
 
     if (insertError || !inserted) {
       console.error(insertError);
+      if (insertError && isDbUnavailableMessage(insertError.message)) {
+        forceLocalDbMode();
+        await ensureStoreReady();
+        const id = store.addExpense(expenseRow);
+        await flushStore();
+        return NextResponse.json({ id, storage: "local" });
+      }
       return NextResponse.json(
         {
           error: insertError?.message?.includes("column")
@@ -250,23 +428,16 @@ export async function PATCH(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
-    const access = await assertProjectAccess(auth.ctx, projectId);
-    if (!access.ok) return access.response;
+    const mode = await resolveDbMode();
+    const useLocal = mode === "local";
+    if (!useLocal) {
+      const access = await assertProjectAccess(auth.ctx, projectId);
+      if (!access.ok) return access.response;
+    }
     const body = await request.json();
     const expenseId = Number(body.expenseId);
     if (!expenseId) {
       return NextResponse.json({ error: "Не передан идентификатор расхода" }, { status: 400 });
-    }
-
-    const { data: expense } = await supabase
-      .from("expenses")
-      .select("id")
-      .eq("id", expenseId)
-      .eq("project_id", projectId)
-      .maybeSingle();
-
-    if (!expense) {
-      return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
     }
 
     const updates: Record<string, unknown> = {};
@@ -298,6 +469,36 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Нет данных для обновления" }, { status: 400 });
     }
 
+    if (useLocal) {
+      await ensureStoreReady();
+      const existing = store.getExpense(expenseId, projectId);
+      if (!existing) {
+        return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
+      }
+      store.updateExpense(expenseId, updates as Parameters<typeof store.updateExpense>[1]);
+      store.addActivity({
+        project_id: projectId,
+        action_type: "updated",
+        entity_type: "expense",
+        entity_id: expenseId,
+        details: "Обновлена позиция сметы",
+        user_name: actorName(auth.ctx),
+      });
+      await flushStore();
+      return NextResponse.json({ ok: true, storage: "local" });
+    }
+
+    const { data: expense } = await supabase
+      .from("expenses")
+      .select("id")
+      .eq("id", expenseId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (!expense) {
+      return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
+    }
+
     let { error: updateError } = await supabase
       .from("expenses")
       .update(updates)
@@ -322,6 +523,13 @@ export async function PATCH(request: Request) {
 
     if (updateError) {
       console.error(updateError);
+      if (isDbUnavailableMessage(updateError.message)) {
+        forceLocalDbMode();
+        await ensureStoreReady();
+        store.updateExpense(expenseId, updates as Parameters<typeof store.updateExpense>[1]);
+        await flushStore();
+        return NextResponse.json({ ok: true, storage: "local" });
+      }
       return NextResponse.json(
         { error: "Ошибка обновления расхода", details: updateError.message },
         { status: 500 }
@@ -352,12 +560,35 @@ export async function DELETE(request: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "Некорректный идентификатор проекта" }, { status: 400 });
     }
-    const access = await assertProjectAccess(auth.ctx, projectId);
-    if (!access.ok) return access.response;
+    const mode = await resolveDbMode();
+    const useLocal = mode === "local";
+    if (!useLocal) {
+      const access = await assertProjectAccess(auth.ctx, projectId);
+      if (!access.ok) return access.response;
+    }
     const body = await request.json();
     const expenseId = Number(body.expenseId);
     if (!expenseId) {
       return NextResponse.json({ error: "Не передан идентификатор расхода" }, { status: 400 });
+    }
+
+    if (useLocal) {
+      await ensureStoreReady();
+      const toDelete = store.getExpense(expenseId, projectId);
+      if (!toDelete) {
+        return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
+      }
+      store.removeExpense(expenseId);
+      store.addActivity({
+        project_id: projectId,
+        action_type: "deleted",
+        entity_type: "expense",
+        entity_id: expenseId,
+        details: `Удалена позиция сметы: ${toDelete.category} — ${toDelete.amount} ₽`,
+        user_name: actorName(auth.ctx),
+      });
+      await flushStore();
+      return NextResponse.json({ ok: true, storage: "local" });
     }
 
     const { data: toDelete } = await supabase
@@ -379,6 +610,13 @@ export async function DELETE(request: Request) {
 
     if (deleteError) {
       console.error(deleteError);
+      if (isDbUnavailableMessage(deleteError.message)) {
+        forceLocalDbMode();
+        await ensureStoreReady();
+        store.removeExpense(expenseId);
+        await flushStore();
+        return NextResponse.json({ ok: true, storage: "local" });
+      }
       return NextResponse.json({ error: "Ошибка удаления расхода" }, { status: 500 });
     }
 

@@ -70,6 +70,11 @@ export interface Expense {
   date: string;
   category: string;
   description: string | null;
+  subcategory?: string | null;
+  quantity?: number | null;
+  unit_price?: number | null;
+  unit?: string | null;
+  kind?: string | null;
   amount: number;
   added_by: string | null;
   created_at: string;
@@ -435,7 +440,18 @@ export const store = {
   },
   
   getExpenses(projectId: number) {
-    return getStore().expenses.filter((e) => e.project_id === projectId);
+    return getStore()
+      .expenses.filter((e) => e.project_id === projectId)
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+  },
+
+  clearExpenses(projectId: number) {
+    const s = getStore();
+    s.expenses = s.expenses.filter((e) => e.project_id !== projectId);
+    persist();
   },
   
   addExpense(data: Omit<Expense, "id" | "created_at">) {
@@ -446,6 +462,19 @@ export const store = {
     persist();
     return id;
   },
+
+  addExpensesBulk(rows: Omit<Expense, "id" | "created_at">[]) {
+    const s = getStore();
+    const ids: number[] = [];
+    const ts = now();
+    for (const row of rows) {
+      const id = ++s.seq.expenses;
+      s.expenses.push({ ...row, id, created_at: ts });
+      ids.push(id);
+    }
+    persist();
+    return ids;
+  },
   
   removeExpense(expenseId: number) {
     const s = getStore();
@@ -453,12 +482,37 @@ export const store = {
     persist();
   },
   
-  updateExpense(expenseId: number, data: Partial<Pick<Expense, "date" | "category" | "description" | "amount">>) {
+  updateExpense(
+    expenseId: number,
+    data: Partial<
+      Pick<
+        Expense,
+        | "date"
+        | "category"
+        | "description"
+        | "subcategory"
+        | "quantity"
+        | "unit_price"
+        | "unit"
+        | "kind"
+        | "amount"
+      >
+    >
+  ) {
     const s = getStore();
     const exp = s.expenses.find((e) => e.id === expenseId);
-    if (!exp) return;
+    if (!exp) return false;
     Object.assign(exp, data);
     persist();
+    return true;
+  },
+
+  getExpense(expenseId: number, projectId: number) {
+    return (
+      getStore().expenses.find(
+        (e) => e.id === expenseId && e.project_id === projectId
+      ) ?? null
+    );
   },
   
   getActivity(projectId: number) {
