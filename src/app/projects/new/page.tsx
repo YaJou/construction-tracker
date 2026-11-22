@@ -293,26 +293,37 @@ export default function NewProjectPage() {
         storage: data.storage || "local",
       });
 
+      let photoErrors = 0;
       if (photoFiles.length > 0) {
         for (const file of photoFiles) {
           if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
             continue;
           }
-          const compressed = await compressPhoto(file);
-          const comment =
-            file.name.toLowerCase().includes("план") || file.name.toLowerCase().includes("plan")
-              ? "План"
-              : null;
-          await uploadPhotoWithProgress(projectId, {
-            full: compressed.full,
-            thumb: compressed.thumb,
-            comment,
-          });
+          try {
+            const compressed = await compressPhoto(file);
+            const comment =
+              file.name.toLowerCase().includes("план") ||
+              file.name.toLowerCase().includes("plan")
+                ? "План"
+                : null;
+            await uploadPhotoWithProgress(projectId, {
+              full: compressed.full,
+              thumb: compressed.thumb,
+              comment,
+            });
+          } catch (photoErr) {
+            console.warn("photo upload:", photoErr);
+            photoErrors += 1;
+          }
         }
       }
 
       localStorage.removeItem(DRAFT_KEY);
-      setToast("Объект создан");
+      setToast(
+        photoErrors > 0
+          ? `Объект создан. ${photoErrors} фото не загрузились — добавьте их на карточке.`
+          : "Объект создан"
+      );
       setTimeout(() => router.push(`/projects/${projectId}`), 400);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Ошибка");

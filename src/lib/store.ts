@@ -59,6 +59,7 @@ export interface Photo {
   project_id: number;
   stage_id: number | null;
   file_path: string;
+  thumbnail_url?: string | null;
   comment: string | null;
   uploaded_by: string | null;
   created_at: string;
@@ -413,7 +414,20 @@ export const store = {
   },
   
   getPhotos(projectId: number) {
-    return getStore().photos.filter((p) => p.project_id === projectId);
+    return getStore()
+      .photos.filter((p) => p.project_id === projectId)
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+  },
+
+  getPhoto(photoId: number, projectId: number) {
+    return (
+      getStore().photos.find(
+        (p) => p.id === photoId && p.project_id === projectId
+      ) ?? null
+    );
   },
   
   addPhoto(data: Omit<Photo, "id" | "created_at">) {
@@ -431,12 +445,16 @@ export const store = {
     persist();
   },
   
-  updatePhoto(photoId: number, data: Partial<Pick<Photo, "comment" | "stage_id">>) {
+  updatePhoto(
+    photoId: number,
+    data: Partial<Pick<Photo, "comment" | "stage_id" | "thumbnail_url">>
+  ) {
     const s = getStore();
     const photo = s.photos.find((p) => p.id === photoId);
-    if (!photo) return;
+    if (!photo) return false;
     Object.assign(photo, data);
     persist();
+    return true;
   },
   
   getExpenses(projectId: number) {
