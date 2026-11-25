@@ -29,8 +29,10 @@ import {
   SlidersHorizontal,
   X,
   Home,
+  Loader2,
 } from "lucide-react";
 import { LoadingBlock, SkeletonCards } from "@/components/ui/Loading";
+import { setClientLocalArchived } from "@/lib/clientLocalStore";
 import { differenceInCalendarDays, format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -139,6 +141,8 @@ export default function DashboardPage() {
   } | null>(null);
   const [todayLoading, setTodayLoading] = useState(true);
   const [periodLoading, setPeriodLoading] = useState(true);
+  const [archivingIds, setArchivingIds] = useState<number[]>([]);
+  const [archiveToast, setArchiveToast] = useState<string | null>(null);
 
   const { projects, filterOptions, loading, error, refetch } = useProjects(
     listType,
@@ -249,7 +253,7 @@ export default function DashboardPage() {
   }, []);
 
   const sortedProjects = useMemo(() => {
-    const list = [...projects];
+    const list = projects.filter((p) => !archivingIds.includes(p.id));
     if (sortBy === "progress") {
       list.sort((a, b) => b.progress_percent - a.progress_percent);
     } else if (sortBy === "deadline") {
@@ -271,7 +275,7 @@ export default function DashboardPage() {
       );
     }
     return list;
-  }, [projects, sortBy]);
+  }, [projects, sortBy, archivingIds]);
 
   const displayProjects = useMemo(() => {
     if (loading) return [];
@@ -446,13 +450,31 @@ export default function DashboardPage() {
   };
 
   async function archiveProject(id: number) {
-    if (id < 0) return;
-    await fetch(`/api/projects/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ archived: true }),
-    });
-    refetch();
+    if (id < 0 || archivingIds.includes(id)) return;
+    setMenuOpenId(null);
+    setArchivingIds((prev) => [...prev, id]);
+    setArchiveToast("Архивируем объект…");
+    setClientLocalArchived(id, true);
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      if (!res.ok) {
+        setClientLocalArchived(id, false);
+        setArchiveToast("Не удалось архивировать. Попробуйте ещё раз.");
+        return;
+      }
+      setArchiveToast("Объект в архиве");
+      void refetch();
+    } catch {
+      setClientLocalArchived(id, false);
+      setArchiveToast("Не удалось архивировать. Проверьте сеть.");
+    } finally {
+      setArchivingIds((prev) => prev.filter((x) => x !== id));
+      window.setTimeout(() => setArchiveToast(null), 2500);
+    }
   }
 
   const firstPhotoHref =
@@ -536,6 +558,17 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5 md:space-y-6">
+      {archiveToast && (
+        <div
+          role="status"
+          className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-[12px] border border-line bg-ink px-4 py-2.5 text-sm text-white shadow-soft flex items-center gap-2"
+        >
+          {archivingIds.length > 0 && (
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
+          )}
+          {archiveToast}
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>

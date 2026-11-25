@@ -172,6 +172,7 @@ export default function ProjectPage() {
   const [substepBusyId, setSubstepBusyId] = useState<number | null>(null);
   const [substepError, setSubstepError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [archiving, setArchiving] = useState<"archive" | "restore" | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportPdfError, setExportPdfError] = useState("");
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
@@ -1210,19 +1211,34 @@ export default function ProjectPage() {
                 >
                   <button
                     type="button"
-                    className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface"
+                    className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-60"
+                    disabled={!!archiving}
                     onClick={async () => {
                       setMenuOpen(false);
                       const newArchived = !project.archived;
-                      await fetch(`/api/projects/${project.id}`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ archived: newArchived }),
-                      });
-                      refetch();
+                      setArchiving(newArchived ? "archive" : "restore");
+                      try {
+                        await fetch(`/api/projects/${project.id}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ archived: newArchived }),
+                        });
+                        setProject((prev) =>
+                          prev ? { ...prev, archived: newArchived } : prev
+                        );
+                        await refetch();
+                      } finally {
+                        setArchiving(null);
+                      }
                     }}
                   >
-                    {project.archived ? "Восстановить из архива" : "В архив"}
+                    {archiving === "archive"
+                      ? "Архивируем…"
+                      : archiving === "restore"
+                        ? "Восстанавливаем…"
+                        : project.archived
+                          ? "Восстановить из архива"
+                          : "В архив"}
                   </button>
                 </div>
               )}
@@ -1277,24 +1293,50 @@ export default function ProjectPage() {
               >
                 <button
                   type="button"
-                  className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface"
+                  className="w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-60"
+                  disabled={!!archiving}
                   onClick={async () => {
                     setMenuOpen(false);
                     const newArchived = !project.archived;
-                    await fetch(`/api/projects/${project.id}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ archived: newArchived }),
-                    });
-                    refetch();
+                    setArchiving(newArchived ? "archive" : "restore");
+                    try {
+                      await fetch(`/api/projects/${project.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ archived: newArchived }),
+                      });
+                      setProject((prev) =>
+                        prev ? { ...prev, archived: newArchived } : prev
+                      );
+                      await refetch();
+                    } finally {
+                      setArchiving(null);
+                    }
                   }}
                 >
-                  {project.archived ? "Восстановить из архива" : "В архив"}
+                  {archiving === "archive"
+                    ? "Архивируем…"
+                    : archiving === "restore"
+                      ? "Восстанавливаем…"
+                      : project.archived
+                        ? "Восстановить из архива"
+                        : "В архив"}
                 </button>
               </div>
             )}
           </div>
         </div>
+        {archiving && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-[12px] border border-line bg-cream px-3 py-2 text-sm text-ink"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-orange" aria-hidden />
+            {archiving === "restore"
+              ? "Восстанавливаем из архива…"
+              : "Архивируем объект…"}
+          </div>
+        )}
       </header>
 
       {exportPdfError && (

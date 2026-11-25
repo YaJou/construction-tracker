@@ -8,7 +8,7 @@ import {
   resolveDbMode,
 } from "@/lib/dbMode";
 import { getProjectLocal } from "@/lib/localProjects";
-import { ensureStoreReady, flushStore, store } from "@/lib/store";
+import { ensureStoreReady, flushStore, store, withStoreBatch } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -142,9 +142,6 @@ export async function PATCH(
     const id = Number((await params).id);
     if (!id) return NextResponse.json({ error: "Неверный ID" }, { status: 400 });
 
-    const access = await assertProjectAccess(auth.ctx, id);
-    if (!access.ok) return access.response;
-
     const body = await request.json();
     const fields = [
       "name",
@@ -171,20 +168,36 @@ export async function PATCH(
     }
 
     updates.updated_at = new Date().toISOString();
+    const archiveOnly =
+      Object.keys(updates).length === 2 &&
+      updates.archived !== undefined &&
+      updates.updated_at !== undefined;
 
     const mode = await resolveDbMode();
+    if (mode !== "local") {
+      const access = await assertProjectAccess(auth.ctx, id);
+      if (!access.ok) return access.response;
+    }
+
     if (mode === "local") {
       await ensureStoreReady();
-      store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
-      store.addActivity({
-        project_id: id,
-        action_type: "updated",
-        entity_type: "project",
-        entity_id: id,
-        details: "Обновлена информация по проекту",
-        user_name: actorName(auth.ctx),
+      await withStoreBatch(() => {
+        store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
+        store.addActivity({
+          project_id: id,
+          action_type: "updated",
+          entity_type: "project",
+          entity_id: id,
+          details: archiveOnly
+            ? updates.archived
+              ? "Объект перемещён в архив"
+              : "Объект восстановлен из архива"
+            : "Обновлена информация по проекту",
+          user_name: actorName(auth.ctx),
+        });
       });
-      await flushStore();
+      // Don't block the UI on Neon write — flush in background
+      void flushStore();
       return NextResponse.json({ ok: true, storage: "local" });
     }
 

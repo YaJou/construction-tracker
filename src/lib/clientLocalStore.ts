@@ -66,12 +66,21 @@ export function upsertClientLocalProject(project: ClientLocalProject) {
   writeAll(all);
 }
 
-export function mergeProjectsWithClientLocal<T extends { id: number }>(
+export function setClientLocalArchived(id: number, archived: boolean) {
+  const all = readAll();
+  const idx = all.findIndex((p) => p.id === id);
+  if (idx < 0) return;
+  all[idx] = { ...all[idx], archived, updated_at: new Date().toISOString() };
+  writeAll(all);
+}
+
+export function mergeProjectsWithClientLocal<T extends { id: number; archived?: boolean }>(
   remote: T[]
 ): Array<T | ClientLocalProject> {
   const local = listClientLocalProjects();
   if (local.length === 0) return remote;
   const remoteIds = new Set(remote.map((p) => p.id));
-  const extras = local.filter((p) => !remoteIds.has(p.id));
+  // Active list: don't re-inject archived local-only cards
+  const extras = local.filter((p) => !remoteIds.has(p.id) && !p.archived);
   return [...extras, ...remote];
 }
