@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { mergeProjectsWithClientLocal } from "@/lib/clientLocalStore";
+import {
+  mergeProjectsWithClientLocal,
+  replaceClientLocalProjects,
+} from "@/lib/clientLocalStore";
 
 export interface ProjectListItem {
   id: number;
@@ -85,7 +88,38 @@ export function useProjects(
       const json = await res.json();
       if (requestId !== requestIdRef.current) return;
       const remote = (json.projects ?? json) as ProjectListItem[];
-      setData(mergeProjectsWithClientLocal(remote) as ProjectListItem[]);
+      // Shared Neon store is source of truth — don't mix device-only localStorage ghosts
+      setData(remote);
+      replaceClientLocalProjects(
+        remote.map((p) => ({
+          id: p.id,
+          name: p.name,
+          client: p.client,
+          address: p.address,
+          phone: null,
+          start_date: p.start_date,
+          planned_end_date: p.planned_end_date,
+          status: p.status,
+          budget: p.budget,
+          manager: p.manager,
+          object_type: null,
+          area_sqm: null,
+          note: null,
+          archived: false,
+          created_at: p.updated_at,
+          updated_at: p.updated_at,
+          progress_percent: p.progress_percent,
+          active_stages: p.active_stages,
+          total_stages: p.total_stages,
+          completed_stages: p.completed_stages,
+          preview_photos: p.preview_photos,
+          last_activity_at: p.last_activity_at,
+          last_activity_summary: p.last_activity_summary,
+          today_photos_count: p.today_photos_count,
+          total_spent: p.total_spent,
+          storage: json.storage || "local",
+        }))
+      );
       if (json.filter_options) setFilterOptions(json.filter_options);
       fetchedAtRef.current = Date.now();
       setError(null);

@@ -48,7 +48,7 @@ export async function GET(
     const projectId = Number((await params).id);
     const mode = await resolveDbMode();
     if (mode === "local") {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       return NextResponse.json(store.getPhotos(projectId), {
         headers: { "Cache-Control": "no-store" },
       });
@@ -65,7 +65,7 @@ export async function GET(
       console.error(error);
       if (isDbUnavailableMessage(error.message)) {
         forceLocalDbMode();
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         return NextResponse.json(store.getPhotos(projectId), {
           headers: { "Cache-Control": "no-store" },
         });
@@ -78,7 +78,7 @@ export async function GET(
     try {
       forceLocalDbMode();
       const projectId = Number((await params).id);
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       return NextResponse.json(store.getPhotos(projectId), {
         headers: { "Cache-Control": "no-store" },
       });
@@ -142,7 +142,7 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const fileUrl = `data:${mime};base64,${fullBuf.toString("base64")}`;
       let thumbnailUrl: string | null = null;
       if (thumbBuf && thumbBuf.length > 0 && thumbBuf.length <= LOCAL_MAX_BYTES) {
@@ -331,7 +331,7 @@ export async function PATCH(request: Request) {
     }
 
     if (useLocal) {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const ok = store.updatePhoto(photoId, updates);
       if (!ok) {
         return NextResponse.json({ error: "Фото не найдено" }, { status: 404 });
@@ -394,7 +394,7 @@ export async function DELETE(request: Request) {
     }
 
     if (useLocal) {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const photo = store.getPhoto(photoId, projectId);
       if (!photo) {
         return NextResponse.json({ error: "Фото не найдено" }, { status: 404 });

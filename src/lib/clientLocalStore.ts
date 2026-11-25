@@ -74,6 +74,11 @@ export function setClientLocalArchived(id: number, archived: boolean) {
   writeAll(all);
 }
 
+/** Overwrite device cache from shared server list (keeps phones/PC in sync). */
+export function replaceClientLocalProjects(projects: ClientLocalProject[]) {
+  writeAll(projects.map((p) => ({ ...p, storage: p.storage || "local" })));
+}
+
 export function mergeProjectsWithClientLocal<T extends { id: number; archived?: boolean }>(
   remote: T[]
 ): Array<T | ClientLocalProject> {

@@ -49,7 +49,7 @@ function optionalNumber(v: unknown) {
 }
 
 async function localExpensesPayload(projectId: number) {
-  await ensureStoreReady();
+  await ensureStoreReady({ fresh: true });
   const project = store.getProject(projectId);
   const list = store.getExpenses(projectId);
   const budget = Number(project?.budget ?? 0);
@@ -175,7 +175,7 @@ export async function POST(request: Request) {
       const lines = buildDetailedSmetaExpenseRows(date, addedBy);
 
       if (useLocal) {
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         const total = lines.reduce((s, r) => s + r.amount, 0);
         await withStoreBatch(() => {
           if (replace) store.clearExpenses(projectId);
@@ -220,7 +220,7 @@ export async function POST(request: Request) {
         if (delError) {
           if (isDbUnavailableMessage(delError.message)) {
             forceLocalDbMode();
-            await ensureStoreReady();
+            await ensureStoreReady({ fresh: true });
             store.clearExpenses(projectId);
             store.addExpensesBulk(
               lines.map((r) => ({
@@ -258,7 +258,7 @@ export async function POST(request: Request) {
         console.error(insertError);
         if (isDbUnavailableMessage(insertError.message)) {
           forceLocalDbMode();
-          await ensureStoreReady();
+          await ensureStoreReady({ fresh: true });
           if (replace) store.clearExpenses(projectId);
           store.addExpensesBulk(
             lines.map((r) => ({
@@ -336,7 +336,7 @@ export async function POST(request: Request) {
     };
 
     if (useLocal) {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const id = store.addExpense(expenseRow);
       const label = subcategory ? `${category} / ${subcategory}` : category;
       store.addActivity({
@@ -389,7 +389,7 @@ export async function POST(request: Request) {
       console.error(insertError);
       if (insertError && isDbUnavailableMessage(insertError.message)) {
         forceLocalDbMode();
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         const id = store.addExpense(expenseRow);
         await flushStore();
         return NextResponse.json({ id, storage: "local" });
@@ -472,7 +472,7 @@ export async function PATCH(request: Request) {
     }
 
     if (useLocal) {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const existing = store.getExpense(expenseId, projectId);
       if (!existing) {
         return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
@@ -527,7 +527,7 @@ export async function PATCH(request: Request) {
       console.error(updateError);
       if (isDbUnavailableMessage(updateError.message)) {
         forceLocalDbMode();
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         store.updateExpense(expenseId, updates as Parameters<typeof store.updateExpense>[1]);
         await flushStore();
         return NextResponse.json({ ok: true, storage: "local" });
@@ -575,7 +575,7 @@ export async function DELETE(request: Request) {
     }
 
     if (useLocal) {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       const toDelete = store.getExpense(expenseId, projectId);
       if (!toDelete) {
         return NextResponse.json({ error: "Расход не найден" }, { status: 404 });
@@ -614,7 +614,7 @@ export async function DELETE(request: Request) {
       console.error(deleteError);
       if (isDbUnavailableMessage(deleteError.message)) {
         forceLocalDbMode();
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         store.removeExpense(expenseId);
         await flushStore();
         return NextResponse.json({ ok: true, storage: "local" });

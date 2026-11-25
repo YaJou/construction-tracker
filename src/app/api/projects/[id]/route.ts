@@ -180,7 +180,7 @@ export async function PATCH(
     }
 
     if (mode === "local") {
-      await ensureStoreReady();
+      await ensureStoreReady({ fresh: true });
       await withStoreBatch(() => {
         store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
         store.addActivity({
@@ -196,8 +196,7 @@ export async function PATCH(
           user_name: actorName(auth.ctx),
         });
       });
-      // Don't block the UI on Neon write — flush in background
-      void flushStore();
+      await flushStore();
       return NextResponse.json({ ok: true, storage: "local" });
     }
 
@@ -218,7 +217,7 @@ export async function PATCH(
       console.error(updateError);
       if (isDbUnavailableMessage(updateError.message)) {
         forceLocalDbMode();
-        await ensureStoreReady();
+        await ensureStoreReady({ fresh: true });
         store.updateProject(id, updates as Parameters<typeof store.updateProject>[1]);
         await flushStore();
         return NextResponse.json({ ok: true, storage: "local" });

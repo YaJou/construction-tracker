@@ -27,7 +27,7 @@ export type CreateProjectInput = {
 };
 
 export async function createProjectLocal(input: CreateProjectInput): Promise<number> {
-  await ensureStoreReady();
+  await ensureStoreReady({ fresh: true });
   const projectId = await withStoreBatch(() => {
     const id = store.createProject({
       name: input.name,
@@ -84,12 +84,12 @@ export async function createProjectLocal(input: CreateProjectInput): Promise<num
 }
 
 export async function listProjectsLocal(): Promise<Project[]> {
-  await ensureStoreReady();
+  await ensureStoreReady({ fresh: true });
   return store.getProjects();
 }
 
 export async function getProjectLocal(id: number) {
-  await ensureStoreReady();
+  await ensureStoreReady({ fresh: true });
   const project = store.getProject(id);
   if (!project) return null;
   const stages = store.getStages(id).map((s) => ({
